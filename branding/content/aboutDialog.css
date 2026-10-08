@@ -1,0 +1,47 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Orbit Browser's about dialog: the mark in its colours on a dark ground,
+   in place of Firefox's (browser/branding/official/content/aboutDialog.css). */
+
+@media not ((prefers-contrast) and (prefers-color-scheme: light)) {
+  #aboutDialogContainer {
+    background-color: #16181d;
+    color: #fff;
+    color-scheme: dark;
+  }
+
+  #bottomBox {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  #trademark {
+    color: #9a9ca3;
+  }
+}
+
+#rightBox {
+  background-size: auto 36px;
+  margin-inline: 30px;
+  padding-top: 70px;
+}
+
+#bottomBox {
+  padding: 15px 10px;
+}
+
+#trademark {
+  font-size: xx-small;
+  text-align: center;
+  margin-block: 10px;
+}
+
+/* The Firefox Orbit Browser is built on, under its own version (the line
+   scripts/omni_patches.py adds), selectable as the version is. */
+#orbitFirefoxVersion {
+  margin-inline-start: 0;
+  user-select: text;
+  -moz-user-focus: normal;
+  cursor: text;
+}

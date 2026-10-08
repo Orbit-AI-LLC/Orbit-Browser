@@ -1,0 +1,93 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Orbit Browser's own parts of the browser window: its colours, the toolbar's
+   Orbit button and its panel (OrbitBrowser.sys.mjs loads this into every window). */
+
+/* Orbit's colours in place of Firefox's. Firefox's new look tints the window
+   violet, edges the selected tab with a violet to orange gradient and washes the
+   tab strip from violet to peach. Orbit Browser has a night-sky slate, Orbit teal
+   and indigo instead. Only the default, Light and Dark themes change: a theme the
+   person installs keeps its colours, and so do private windows. These are
+   Firefox's design tokens; rules outside its cascade layers win over them. */
+@media -moz-pref("browser.nova.enabled") and (not ((forced-colors) or (-moz-native-theme))) {
+  :root:not([lwtheme]) {
+    /* Firefox's violet greys (text, icons, hovers, borders), cooled to slate:
+       the same lightness, a little less colour, hue 260 instead of 295. */
+    --color-violet-desaturated-0: #eef2f7;
+    --color-violet-desaturated-10: #dbe6f6;
+    --color-violet-desaturated-20: #bfd0ea;
+    --color-violet-desaturated-30: #9fb4d5;
+    --color-violet-desaturated-40: #7993bc;
+    --color-violet-desaturated-50: #59729a;
+    --color-violet-desaturated-60: #3e5579;
+    --color-violet-desaturated-70: #273b5b;
+    --color-violet-desaturated-80: #142541;
+    --color-violet-desaturated-90: #07152d;
+
+    /* Focus rings, primary buttons, the loading tab: Orbit teal, as in the logo. */
+    --color-accent-primary: light-dark(#087683, #3fe0cf);
+    --color-accent-primary-hover: light-dark(#006471, #74ebdd);
+    --color-accent-primary-active: light-dark(#005360, #a6f3ea);
+
+    /* The selected tab's edge: teal into indigo, like an orbit's glow. */
+    --tab-border-color-selected-leading: light-dark(#2ebfb1, #3fe0cf);
+    --tab-border-color-selected-trailing: light-dark(#7b86ff, #8f9bff);
+
+    /* The selected tab, the focused address bar and menus: in the dark, deep
+       space rather than a warm black. */
+    --background-color-box: light-dark(#ffffff, #0f1629);
+
+    /* The tab strip: indigo into a teal horizon, over white or deep space. */
+    --toolbox-background-color: light-dark(#ffffff, #0c1224);
+    --toolbox-background-color-gradient-leading: light-dark(#dde1ff, #1b2756);
+    --toolbox-background-color-gradient-trailing: light-dark(#c9f1ec, #0c4e57);
+
+    /* Firefox writes these violets out rather than taking them from the greys. */
+    --chrome-content-separator-color: light-dark(rgba(191, 208, 234, 0.5), rgba(63, 62, 66, 0.5));
+    --toolbarbutton-background-color-hover: light-dark(rgba(89, 114, 154, 0.25), rgba(159, 180, 213, 0.25));
+    --toolbarbutton-background-color-active: light-dark(rgba(89, 114, 154, 0.4), rgba(159, 180, 213, 0.4));
+    --urlbar-box-background-color-active: light-dark(rgba(89, 114, 154, 0.6), rgba(159, 180, 213, 0.6));
+  }
+}
+
+/* Firefox's password manager is off (PasswordManagerEnabled): its Passwords
+   page is blocked, so the app menu doesn't offer it. Orbit Pass is on the toolbar. */
+#appMenu-passwords-button {
+  display: none !important;
+}
+
+#orbit-button {
+  list-style-image: url("chrome://browser/skin/orbit-button.svg");
+}
+
+/* The Orbit apps' marks are in their own colours. */
+#PanelUI-orbit .subviewbutton-iconic > .toolbarbutton-icon {
+  width: 20px;
+  height: 20px;
+  -moz-context-properties: none;
+}
+
+#PanelUI-orbit .orbit-panel-account {
+  padding-block: 8px;
+  gap: 10px;
+}
+
+#PanelUI-orbit .orbit-panel-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+#PanelUI-orbit .orbit-panel-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+#PanelUI-orbit .orbit-panel-subtitle {
+  margin: 0;
+  color: var(--text-color-deemphasized);
+  font-size: 0.9em;
+}

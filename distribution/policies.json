@@ -1,0 +1,52 @@
+{
+  "policies": {
+    "AIControls": {
+      "Default": { "Value": "blocked", "Locked": true },
+      "SidebarChatbot": { "Value": "available", "Locked": true }
+    },
+    "AutofillAddressEnabled": false,
+    "AutofillCreditCardEnabled": false,
+    "DisableAccounts": true,
+    "DisableAppUpdate": true,
+    "DisableFeedbackCommands": true,
+    "DisableFirefoxStudies": true,
+    "DisableFormHistory": true,
+    "DisableTelemetry": true,
+    "FirefoxHome": { "Search": true, "TopSites": true, "SponsoredTopSites": false, "Highlights": true, "Pocket": false, "Stories": false, "SponsoredPocket": false, "SponsoredStories": false, "Snippets": false, "Weather": false, "Locked": false },
+    "FirefoxSuggest": { "WebSuggestions": false, "SponsoredSuggestions": false, "ImproveSuggest": false, "OnlineEnabled": false, "Locked": true },
+    "IPProtectionAvailable": false,
+    "PasswordManagerEnabled": false,
+    "UserMessaging": { "WhatsNew": false, "ExtensionRecommendations": false, "FeatureRecommendations": false, "UrlbarInterventions": false, "SkipOnboarding": true, "MoreFromMozilla": false, "FirefoxLabs": false, "Locked": true },
+    "Preferences": {
+      "browser.ml.enable": { "Value": false, "Status": "locked" },
+      "browser.ml.pageAssist.enabled": { "Value": false, "Status": "locked" },
+      "browser.ml.linkPreview.enabled": { "Value": false, "Status": "locked" },
+      "browser.ml.chat.enabled": { "Value": true, "Status": "locked" },
+      "browser.ml.chat.provider": { "Value": "https://ai.orbit.com.ai/threads/start/", "Status": "locked" },
+      "browser.ml.chat.providers": { "Value": "orbitai", "Status": "locked" },
+      "browser.ml.chat.hideLocalhost": { "Value": true, "Status": "locked" },
+      "browser.ml.chat.shortcuts.smartwindow": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.enabled": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.agent.enabled": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.memories.generateFromHistory": { "Value": false, "Status": "locked" },
+      "browser.smartwindow.memories.generateFromConversation": { "Value": false, "Status": "locked" },
+      "browser.tabs.groups.smart.enabled": { "Value": false, "Status": "locked" },
+      "browser.tabs.groups.smart.userEnabled": { "Value": false, "Status": "locked" },
+      "browser.urlbar.quicksuggest.mlEnabled": { "Value": false, "Status": "locked" },
+      "browser.urlbar.yelp.mlEnabled": { "Value": false, "Status": "locked" },
+      "browser.search.visualSearch.featureGate": { "Value": false, "Status": "locked" },
+      "browser.newtabpage.activity-stream.discoverystream.sections.personalization.inferred.enabled": { "Value": false, "Status": "locked" },
+      "browser.newtabpage.activity-stream.discoverystream.sections.personalization.inferred.user.enabled": { "Value": false, "Status": "locked" },
+      "browser.preferences.aiControls": { "Value": false, "Status": "locked" },
+      "browser.shell.customIcon.enabled": { "Value": false, "Status": "locked" },
+      "extensions.ml.enabled": { "Value": false, "Status": "locked" },
+      "extensions.formautofill.useml": { "Value": false, "Status": "locked" },
+      "places.semanticHistory.featureGate": { "Value": false, "Status": "locked" },
+      "pdfjs.enableAltTextModelDownload": { "Value": false, "Status": "locked" },
+      "pdfjs.enableGuessAltText": { "Value": false, "Status": "locked" },
+      "signon.firefoxRelay.feature": { "Value": "unavailable", "Status": "locked" },
+      "signon.autofillForms": { "Value": false, "Status": "locked" },
+      "signon.generation.enabled": { "Value": false, "Status": "locked" }
+    }
+  }
+}

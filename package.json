@@ -1,0 +1,9 @@
+{
+  "name": "orbit-browser-build",
+  "private": true,
+  "description": "Orbit Browser's build tools. Node is only for editing the Windows executables' icons and version details (scripts/win_resources.mjs).",
+  "type": "module",
+  "devDependencies": {
+    "resedit": "3.1.0"
+  }
+}
