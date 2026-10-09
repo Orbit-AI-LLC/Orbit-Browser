@@ -51,7 +51,7 @@ function edit(file, { description, iconFor }) {
   const [info] = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
   for (const language of info.getAllLanguagesForStringValues()) {
     info.setStringValues(language, {
-      CompanyName: "Orbit",
+      CompanyName: "Orbit LLC",
       FileDescription: description,
       ProductName: "Orbit Browser",
       InternalName: "Orbit Browser",
