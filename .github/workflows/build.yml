@@ -115,6 +115,11 @@ jobs:
         with:
           path: .cache
           key: firefox-${{ hashFiles('firefox.json') }}
+      # The browser's update-signature check uses Uint8Array.fromBase64, which
+      # Firefox has and Node has from 25; the runner's own Node is older.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libarchive-tools python3-cryptography
       # Every patch, policy and locked pref against the pinned Firefox, and the
       # update signatures (the browser's own check runs under Node).
