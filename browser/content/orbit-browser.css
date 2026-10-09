@@ -26,7 +26,7 @@
     --color-violet-desaturated-80: #142541;
     --color-violet-desaturated-90: #07152d;
 
-    /* Focus rings, primary buttons, the loading tab: Orbit teal, as in the logo. */
+    /* Focus rings, primary buttons, the loading tab: Orbit teal. */
     --color-accent-primary: light-dark(#087683, #3fe0cf);
     --color-accent-primary-hover: light-dark(#006471, #74ebdd);
     --color-accent-primary-active: light-dark(#005360, #a6f3ea);

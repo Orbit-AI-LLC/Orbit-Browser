@@ -1,7 +1,7 @@
 // Orbit Browser's new tab wallpapers.
 //
-// Space in the colours of the Orbit Browser mark: a blue-black sky, the mark's
-// teal (#3fe0cf to #0a7f8c), and the family's orbit, an ellipse tilted 22° to
+// Space in Orbit Browser's colours: a blue-black sky, Orbit teal (#3fe0cf to
+// #0a7f8c, the window's accent), and the family's orbit, an ellipse tilted 22° to
 // rise to the right with a moon riding it at the top right, passing behind
 // the planet above and in front of it below (scripts/orbitmark.swift). Every
 // scene is drawn here from code with fixed seeds, so a run makes the same

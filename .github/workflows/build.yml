@@ -1,0 +1,268 @@
+name: Build and release
+
+# Every push to main makes Orbit Browser for the Mac and Windows (x64 and
+# Arm) from the Firefox release firefox.json pins, and publishes the builds as
+# a pre-release (0.1.0-build.N); a v* tag publishes a release. Orbit Browser
+# has its own version, VERSION in scripts/build.py, and a tag must be it
+# (v0.1.0). Pull requests build and test without publishing.
+#
+# Installed browsers update themselves from these releases through Orbit
+# Mission Control (browser/modules/OrbitUpdates.sys.mjs), once the release
+# carries signatures made with Orbit Browser's update key, a Tauri signing key
+# as in the other Orbit apps (~/.tauri/orbit-browser.key on the Mac it was
+# made on; its public half is orbitbrowser.updates.pubkey):
+#   TAURI_SIGNING_PRIVATE_KEY           the private key (`cargo tauri signer generate`)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password, if it has one
+#
+# Every day it also checks Mozilla's newest Firefox. Firefox's security fixes
+# reach people only through a new Orbit Browser build, so when "Firefox is
+# current" goes red: run `python3 scripts/update_firefox.py`, check the build
+# and push.
+#
+# Orbit Pass is built in from its own repository, which is private:
+#   ORBIT_PASS_TOKEN            a fine-grained token with read-only Contents on Orbit-AI-LLC/Orbit-Pass
+#
+# The Mac app is signed ad hoc unless these are set (the same secrets as Orbit
+# Pass); then everything in it is signed with the Developer ID, and the disk
+# image is notarized and stapled. An ad hoc build runs, but macOS blocks it
+# when downloaded until it is opened with Control-click > Open.
+#   MACOS_CERTIFICATE_P12       base64 of a "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PASSWORD  its password
+#   APPLE_TEAM_ID               the team ID
+#   NOTARY_APPLE_ID, NOTARY_PASSWORD  an Apple ID and app-specific password for notarytool
+#
+# The Windows installers are unsigned, so SmartScreen warns on first run.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  firefox:
+    name: Firefox is current
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with Mozilla's newest release
+        run: |
+          pinned=$(python3 -c 'import json; print(json.load(open("firefox.json"))["version"])')
+          latest=$(curl -fsSL https://product-details.mozilla.org/1.0/firefox_versions.json | python3 -c 'import json, sys; print(json.load(sys.stdin)["LATEST_FIREFOX_VERSION"])')
+          if [ "$pinned" != "$latest" ]; then
+            echo "::error::Firefox $latest is out and Orbit Browser is on $pinned. Run python3 scripts/update_firefox.py, check the build, and push."
+            exit 1
+          fi
+          echo "Orbit Browser is on Firefox $pinned, the newest release."
+
+  version:
+    name: Version
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      build: ${{ steps.meta.outputs.build }}
+      release: ${{ steps.meta.outputs.release }}
+      tag: ${{ steps.meta.outputs.tag }}
+      name: ${{ steps.meta.outputs.name }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      # Orbit Browser's own version (VERSION in scripts/build.py, not Firefox's):
+      # a tag must be it, and main's builds are -build.N of it.
+      - name: Name the build
+        id: meta
+        run: |
+          base=$(cd scripts && python3 -c 'import build; print(build.orbit_version(0, True))')
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [ "$version" != "$base" ]; then
+              echo "::error::The tag is v$version but scripts/build.py has VERSION $base; tag v$base or change VERSION."
+              exit 1
+            fi
+            echo "release=--release" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "name=Orbit Browser $version" >> "$GITHUB_OUTPUT"
+          else
+            version="${base}-build.${GITHUB_RUN_NUMBER}"
+            echo "release=" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "name=Orbit Browser ${base} build ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Building Orbit Browser $version (build $GITHUB_RUN_NUMBER)"
+
+  tests:
+    name: Tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: firefox-${{ hashFiles('firefox.json') }}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libarchive-tools python3-cryptography
+      # Every patch, policy and locked pref against the pinned Firefox, and the
+      # update signatures (the browser's own check runs under Node).
+      - run: python3 -m unittest discover -s tests
+
+  windows:
+    name: Windows (${{ matrix.platform }})
+    needs: [version, tests]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [win64, win64-aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Orbit-AI-LLC/Orbit-Pass
+          token: ${{ secrets.ORBIT_PASS_TOKEN }}
+          path: orbit-pass
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: firefox-${{ matrix.platform }}-${{ hashFiles('firefox.json') }}
+      - run: npm ci
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libarchive-tools nsis
+      - name: Build
+        run: python3 scripts/build.py --platform ${{ matrix.platform }} --orbit-pass orbit-pass --build ${{ needs.version.outputs.build }} ${{ needs.version.outputs.release }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Orbit-Browser-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: Mac app
+    needs: [version, tests]
+    runs-on: macos-latest
+    env:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Orbit-AI-LLC/Orbit-Pass
+          token: ${{ secrets.ORBIT_PASS_TOKEN }}
+          path: orbit-pass
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: firefox-mac-${{ hashFiles('firefox.json') }}
+
+      - name: Load the Developer ID
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          password="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "SIGN_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
+
+      - name: Ad hoc
+        if: env.MACOS_CERTIFICATE_P12 == ''
+        run: echo "::warning::The Mac app is signed ad hoc; downloaded, macOS blocks it until it's opened with Control-click > Open. Set the MACOS_* secrets (top of .github/workflows/build.yml)."
+
+      - name: Build
+        run: python3 scripts/build.py --platform mac --orbit-pass orbit-pass --build ${{ needs.version.outputs.build }} ${{ needs.version.outputs.release }} ${SIGN_IDENTITY:+--sign "$SIGN_IDENTITY"}
+
+      - name: Notarize
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          dmg=$(ls dist/*.dmg)
+          xcrun notarytool submit "$dmg" --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+
+      # Starts the app (headless) and checks, from inside it, the name, the
+      # policies, every AI feature off, Orbit AI and Orbit Pass.
+      - name: Smoke test
+        run: python3 tests/smoke.py --shots work/smoke
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: Orbit-Browser-mac-smoke
+          path: work/smoke
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Orbit-Browser-mac
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [version, windows, macos]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: Orbit-Browser-{mac,win64,win64-aarch64}
+          path: artifacts
+          merge-multiple: true
+
+      # The update payloads (the Mac app as .app.tar.gz, the Windows
+      # installers), signed as the Tauri apps' are, with the version in the
+      # signature. Without the key nothing is signed, and the next step
+      # writes no manifest.
+      - name: Sign the updates
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography
+          python3 scripts/sign_update.py --version "${{ needs.version.outputs.version }}" artifacts/*.app.tar.gz artifacts/*-Setup.exe
+
+      # Orbit Mission Control offers a release to installed browsers once it
+      # carries orbit-update.json (README, "Updates"); without update
+      # signatures it is left out and the release is not offered.
+      - name: Write the update manifest
+        run: |
+          python3 .github/scripts/orbit_update_manifest.py artifacts \
+            --version "${{ needs.version.outputs.version }}" \
+            --build "${{ needs.version.outputs.build }}" \
+            --commit "$GITHUB_SHA"
+          ls -la artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.name }}
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: artifacts/*

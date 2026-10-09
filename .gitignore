@@ -4,7 +4,8 @@ node_modules/
 __pycache__/
 # Downloaded Firefox builds, unpacked trees and finished packages (scripts/build.py).
 .cache/
-work*/
+# Anchored: a bare work*/ also matches .github/workflows/.
+/work*/
 dist/
 
 # Claude Code session state and worktrees; only the shared settings are kept

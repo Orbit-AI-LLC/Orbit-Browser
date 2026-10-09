@@ -6,9 +6,9 @@ builds and makes them Orbit's:
 
 | | What Orbit Browser does | Where |
 | --- | --- | --- |
-| **Name and logo** | "Orbit Browser" everywhere Firefox names itself; the Orbit family's mark, a globe with an orbit for its equator, on teal | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
+| **Name and logo** | "Orbit Browser" everywhere Firefox names itself; the Orbit family's mark, a globe with an orbit for its equator, on orange | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
 | **Colours** | Orbit's in the window instead of Firefox's violet and orange: a night-sky slate, Orbit teal and indigo | `browser/content/orbit-browser.css` |
-| **Wallpapers** | The new tab's Firefox wallpapers (foxes, promotions) replaced by Orbit's own: space in the logo's teal | `scripts/wallpapers.swift`, `branding/content/wallpapers/`, `scripts/omni_patches.py` |
+| **Wallpapers** | The new tab's Firefox wallpapers (foxes, promotions) replaced by Orbit's own: space in Orbit teal | `scripts/wallpapers.swift`, `branding/content/wallpapers/`, `scripts/omni_patches.py` |
 | **Mozilla's AI** | Every AI feature off and locked, the settings page for them gone, the on-device AI libraries not shipped | `distribution/policies.json`, `scripts/build.py` |
 | **Orbit AI** | The only chatbot: in the sidebar, "Ask Orbit AI" on selected text, "Summarize page" | `scripts/omni_patches.py`, Orbit AI's `/threads/start/` |
 | **Orbit Pass** | Built in: on the toolbar from the first start, listed under Add-ons, can be turned off but not removed | `browser/modules/OrbitBrowser.sys.mjs`, Orbit Pass's `extension/` |
@@ -160,7 +160,7 @@ design tokens:
 - **The selected tab** has a teal-to-indigo edge.
 - **The tab strip** runs from indigo into teal, over white, or over deep navy in dark mode.
 - **The greys** (text, icons, hovers, borders) are Firefox's, cooled to slate.
-- **The accent** (focus rings, primary buttons, the loading tab) is Orbit teal, the logo's.
+- **The accent** (focus rings, primary buttons, the loading tab) is Orbit teal.
 
 Only the default, Light and Dark themes change. A theme the person installs, private windows
 and high contrast keep their own colours. The smoke test checks the selected tab and the tab
@@ -171,7 +171,7 @@ strip, so a Firefox that renames these tokens fails it rather than bringing the 
 Firefox keeps a category of its own among the new tab's wallpapers. The page names it after the
 browser, so it said "Orbit Browser" over pictures of foxes, and Mozilla uses it for promotions too
 (World Cup teams, a football club). Orbit Browser puts its own there instead: eight space scenes in
-the logo's teal, with the family's tilted orbit and its moon.
+Orbit teal, with the family's tilted orbit and its moon.
 
 - **Planet**: the mark as a world. A banded teal planet, its orbit passing behind it above and in
   front of it below, the moon riding it at the top right.
@@ -390,8 +390,8 @@ tests/                    the build tests, the smoke test and its Marionette cli
 
 `scripts/orbitmark.swift` is the Orbit family's mark renderer, the same file in Orbit AI, Chat, IDE,
 Mail, Mission Control, Pass and the Website. Orbit Browser's mark is a globe drawn in line, its rim
-and one meridian, with the family's tilted orbit and moon for its equator, white on teal (`#3fe0cf`
-→ `#0a7f8c`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
+and one meridian, with the family's tilted orbit and moon for its equator, white on orange (`#ffb547`
+→ `#f2621a`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
 own mark. At 16 px, where the family drops the orbit, the globe draws an equator of its own.
 `scripts/build_icon.py` renders the Mac icon, the Windows icons and tiles, the browser's own logo
 pages and the toolbar's mark from it, and Orbit AI's mark for the sidebar. The wordmark is "Orbit
