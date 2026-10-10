@@ -483,6 +483,50 @@ PATCHES: list[Patch] = [
           "-firefox-suggest-brand-name = Firefox Suggest\n",
           "-firefox-suggest-brand-name = Address Bar Suggestions\n",
           "Firefox Suggest, under a name that isn't Firefox's."),
+    # -- the startup profile selector: open the chosen profile through the bundle ---------------
+    # Mac only. Choosing a profile in the selector shown at start-up normally
+    # returns launchWithProfile to Firefox's native start-up code, which
+    # relaunches the engine (Contents/MacOS/firefox) directly. That path skips
+    # the launcher (Contents/MacOS/orbit-browser), the only thing that sets
+    # XUL_APP_FILE and so makes the engine Orbit Browser rather than Firefox; the
+    # relaunched instance looks for its data in ~/Library/Application Support/
+    # Firefox (which macOS guards for Firefox alone), finds no profile and quits
+    # before a window opens -- "the app closes after opening a profile", and only
+    # from the start-up selector (the in-browser profiles panel already launches
+    # through the bundle and works). So launch the chosen profile the panel's way
+    # (launchInstance -> launchAppBundle -> the launcher runs and sets
+    # XUL_APP_FILE), then tell the start-up code to just exit this selector
+    # process. Windows runs firefox.exe directly with no launcher, so its native
+    # relaunch is already Orbit Browser; this patch is the Mac's alone.
+    Patch("browser", "chrome/browser/content/browser/profiles/profile-selector.mjs",
+          """  async launchProfile(profile, url) {
+    if (this.isStartupUI) {
+      await this.setLaunchArguments(profile, url ? ["-url", url] : []);
+      await this.selectableProfileService.uninit();
+    } else {
+      this.selectableProfileService.launchInstance(profile, url ? [url] : []);
+    }
+
+    window.close();
+  }""",
+          """  async launchProfile(profile, url) {
+    // Orbit Browser: launch through the app bundle (so the launcher runs and
+    // sets XUL_APP_FILE) instead of the native launchWithProfile relaunch,
+    // which runs the engine directly and loses Orbit Browser's data folder.
+    this.selectableProfileService.launchInstance(profile, url ? [url] : []);
+    if (this.isStartupUI) {
+      if (this.#startupParams) {
+        this.#startupParams.SetInt(0, Ci.nsIToolkitProfileService.exit);
+        this.#startupParams.SetInt(1, 0);
+        this.#startupParams.SetInt(2, 0);
+      }
+      await this.selectableProfileService.uninit();
+    }
+
+    window.close();
+  }""",
+          "The start-up profile selector opens the chosen profile through the app bundle.",
+          platforms=("mac",)),
 ]
 
 #: Styles added at the end of Mozilla's own stylesheets (they win over what

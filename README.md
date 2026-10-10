@@ -300,6 +300,16 @@ Mission Control's catalog (`apps/releases/catalog.py`) has `orbit-browser` with
   `Profile=Orbit Browser`, so its data is in `~/Library/Application Support/Orbit Browser` and
   `~/Library/Caches/Orbit Browser`. Crash reports don't go to Mozilla (`[Crash Reporter]
   Enabled=0`).
+- **The start-up profile selector opens profiles through the bundle.** Only the launcher sets
+  `XUL_APP_FILE`, so only a launch that goes through the `.app` (which runs the launcher) is Orbit
+  Browser; a launch of `Contents/MacOS/firefox` on its own is plain Firefox, looking for the data
+  folder macOS guards, and quits at once. Firefox's own self-relaunch (what the start-up profile
+  selector uses to open the profile you pick) runs the engine directly and so would close the app
+  the moment you open a profile. `scripts/omni_patches.py` has the selector launch the chosen
+  profile the way the in-browser profiles panel already does — through the bundle, `launchInstance`
+  → `launchAppBundle` → the launcher — then tell the start-up code to exit the selector. Windows
+  runs `firefox.exe` directly with no launcher, so its selector is already fine; the patch is the
+  Mac's alone.
 - **Its icon in the Dock.** `ditto` keeps Mozilla's dates on everything it copies, and macOS keeps
   showing whatever icon it first saw for an app whose date hasn't changed; a bundle that was once
   Firefox.app went on showing the fox as it launched. The build dates the app afresh and registers
