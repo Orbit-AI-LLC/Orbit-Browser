@@ -1,8 +1,8 @@
 """Render every form of the Orbit Browser mark.
 
 The mark is the Orbit family's (scripts/orbitmark.swift, the renderer the
-other Orbit apps share): a globe drawn in line, white on orange, the family's
-tilted orbit for its equator and a moon riding the orbit. Edit the
+other Orbit apps share): a globe drawn in line, white on ocean blue, the
+family's tilted orbit for its equator and a moon riding the orbit. Edit the
 geometry or the colours there, never the outputs:
 
     .venv/bin/python scripts/build_icon.py
