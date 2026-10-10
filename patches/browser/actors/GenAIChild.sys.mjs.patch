@@ -1,0 +1,15 @@
+# Orbit Browser patch: actors/GenAIChild.sys.mjs
+#
+# Lets the sidebar type a prompt into Orbit AI's composer (textarea#composer-input).
+
+--- a/actors/GenAIChild.sys.mjs
++++ b/actors/GenAIChild.sys.mjs
+@@ -205,7 +205,7 @@
+     let el;
+     while (
+       !(el = win.document.querySelector(
+-        '#prompt-textarea, [contenteditable], [role="textbox"]'
++        '#composer-input, #prompt-textarea, [contenteditable], [role="textbox"]'
+       )) &&
+       win.performance.now() - start < tms
+     ) {

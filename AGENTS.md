@@ -20,9 +20,32 @@ task. Say that it is missing and wait to be told what to do.
   and its checksums, `scripts/build.py` makes the apps from it. Never edit a downloaded build by
   hand; every change is made by the build, so moving to a new Firefox is
   `python3 scripts/update_firefox.py` and a rebuild.
-- Changes to Mozilla's own files inside omni.ja are exact text replacements in
-  `scripts/omni_patches.py`, each of which must match exactly once. When a Firefox release moves
-  the code, the build stops and names the patch; fix the anchor, don't loosen the check.
+### Hard rules for Orbit's changes to Firefox (do not break these)
+
+Orbit Browser keeps every change it makes to Firefox apart from Mozilla's code, the way the Firefox
+forks (Tor Browser, Mullvad, LibreWolf) do. These rules are not optional:
+
+1. **Edit Mozilla's own omni.ja files only through `patches/`.** Each is a unified-diff `.patch`
+   file, one per Mozilla file, at `patches/<jar>/<path>.patch` (`<jar>` is `browser` or `gre`),
+   applied with `git apply`. To change what Orbit does to a Mozilla file, edit or add a patch there.
+   Never edit a downloaded build, an unpacked `omni.ja`, or `work/` by hand — the build makes every
+   change, so a hand-edit is lost and untracked.
+2. **Never loosen a patch to make it apply.** When a new Firefox moves the code, `git apply` fails
+   and names the patch and hunk. Fix the patch so it still carries Orbit's change — re-anchor it on
+   the new surrounding code (dump the pristine file with `scripts/firefox_file.py`, re-make the edit,
+   `diff -u`). Do not delete hunks, widen/blur context, or drop the change just to get a clean apply:
+   a patch that applies but no longer carries its change silently brings back a feature Orbit removed.
+3. **Add whole new Orbit files through `scripts/build.py`, not as patches.** New files (branding,
+   `browser/modules/`, `browser/content/`, the launcher, `distribution/policies.json`) live in the
+   repo as themselves; `build.py` drops them in. Patches are only for editing Mozilla's existing files.
+4. **The only edits allowed outside `patches/` are the data-generated ones already in
+   `scripts/omni_patches.py`** (the wallpapers from `ORBIT_WALLPAPERS`, the Orbit AI provider from
+   `ORBIT_AI_URL`). Don't add new in-code string replacements there for things that could be a patch.
+5. **A new or changed patch must apply cleanly before you hand work back.** Run
+   `python3 scripts/update_firefox.py --check` (every patch against the pinned Firefox) and the tests
+   below. If a patch can't be made to apply without dropping its change, stop and say so.
+6. **Moving to a new Firefox is `python3 scripts/update_firefox.py` (it pins and checks the patches)
+   then a rebuild.** Don't bump `firefox.json` by hand.
 - Run `python3 -m unittest discover -s tests` before handing work back; it checks every patch,
   policy and locked pref against the pinned Firefox. After a Mac build, also run
   `python3 tests/smoke.py`, which starts the app and checks it from inside. Say plainly if anything

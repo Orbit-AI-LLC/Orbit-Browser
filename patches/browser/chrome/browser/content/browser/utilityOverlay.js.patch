@@ -1,0 +1,18 @@
+# Orbit Browser patch: chrome/browser/content/browser/utilityOverlay.js
+#
+# Hides Share Ideas and Feedback, and Switching to a New Device, in the Help menu and the app menu.
+
+--- a/chrome/browser/content/browser/utilityOverlay.js
++++ b/chrome/browser/content/browser/utilityOverlay.js
+@@ -564,6 +564,11 @@
+ function buildHelpMenu() {
+   document.getElementById("feedbackPage").disabled =
+     !Services.policies.isAllowed("feedbackCommands");
++  // Orbit Browser: no feedback to Mozilla while the policy is off, and no
++  // moving a Mozilla account to a new device.
++  document.getElementById("feedbackPage").hidden =
++    !Services.policies.isAllowed("feedbackCommands");
++  document.getElementById("helpSwitchDevice").hidden = true;
+ 
+   document.getElementById("helpSafeMode").disabled =
+     !Services.policies.isAllowed("safeMode");

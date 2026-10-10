@@ -1,0 +1,23 @@
+# Orbit Browser patch: localization/en-US/toolkit/branding/brandings.ftl
+#
+# The home page's name.
+# Firefox View, under a name that isn't Firefox's.
+# Firefox Suggest, under a name that isn't Firefox's.
+
+--- a/localization/en-US/toolkit/branding/brandings.ftl
++++ b/localization/en-US/toolkit/branding/brandings.ftl
+@@ -24,11 +24,11 @@
+ 
+ -fakespot-brand-full-name = Fakespot by Mozilla
+ 
+--firefox-suggest-brand-name = Firefox Suggest
++-firefox-suggest-brand-name = Address Bar Suggestions
+ 
+--firefox-home-brand-name = Firefox Home
++-firefox-home-brand-name = Orbit Browser Home
+ 
+--firefoxview-brand-name = Firefox View
++-firefoxview-brand-name = Tab Overview
+ 
+ -firefoxlabs-brand-name = Firefox Labs
+ 

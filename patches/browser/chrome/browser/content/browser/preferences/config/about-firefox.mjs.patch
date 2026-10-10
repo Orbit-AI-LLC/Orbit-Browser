@@ -1,0 +1,22 @@
+# Orbit Browser patch: chrome/browser/content/browser/preferences/config/about-firefox.mjs
+#
+# Settings' update section shows Orbit Browser's version and the Firefox under it.
+
+--- a/chrome/browser/content/browser/preferences/config/about-firefox.mjs
++++ b/chrome/browser/content/browser/preferences/config/about-firefox.mjs
+@@ -198,8 +198,13 @@
+ Preferences.addSetting({
+   id: "updateAppInfo",
+   getControlConfig(config) {
+-    let version = AppConstants.MOZ_APP_VERSION_DISPLAY;
+-    let distribution;
++    // Orbit Browser: its own version, and the Firefox it is built on below
++    // it, where a distribution's name would go.
++    let version = Services.prefs.getStringPref(
++      "orbitbrowser.version",
++      AppConstants.MOZ_APP_VERSION_DISPLAY
++    );
++    let distribution = `Built on Firefox ${AppConstants.MOZ_APP_VERSION_DISPLAY}`;
+     let distributionId;
+     let releaseNotesURL = "";
+ 

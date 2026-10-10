@@ -1,0 +1,35 @@
+# Orbit Browser patch: localization/en-US/browser/aboutDialog.ftl
+#
+# With the vendor renamed, Firefox's line would credit Orbit with Mozilla's work.
+# The same, in the other form of the line.
+# The About window's line naming the Firefox Orbit Browser is built on.
+# Settings' update section: Firefox's updater is off, Orbit Browser's own is on.
+
+--- a/localization/en-US/browser/aboutDialog.ftl
++++ b/localization/en-US/browser/aboutDialog.ftl
+@@ -32,7 +32,7 @@
+ 
+ update-policy-disabled = Updates disabled by your organization
+ settings-update-policy-disabled =
+-    .label = Updates disabled by your organization
++    .label = { -brand-short-name } downloads new versions itself and asks before it restarts
+ update-noUpdatesFound = { -brand-short-name } is up to date
+ settings-update-no-updates-found =
+     .label = { -brand-short-name } is up to date
+@@ -65,9 +65,9 @@
+ aboutdialog-help-user = { -brand-product-name } Help
+ aboutdialog-submit-feedback = Submit Feedback
+ 
+-community-exp = <label data-l10n-name="community-exp-mozillaLink">{ -vendor-short-name }</label> is a <label data-l10n-name="community-exp-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.
++community-exp = { -brand-short-name } is built on Firefox, made by <label data-l10n-name="community-exp-mozillaLink">Mozilla</label> and a <label data-l10n-name="community-exp-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.
+ 
+-community-2 = { -brand-short-name } is designed by <label data-l10n-name="community-mozillaLink">{ -vendor-short-name }</label>, a <label data-l10n-name="community-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.
++community-2 = { -brand-short-name } is made by Orbit on Firefox, which is designed by <label data-l10n-name="community-mozillaLink">Mozilla</label>, a <label data-l10n-name="community-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.
+ 
+ helpus = Want to help? <label data-l10n-name="helpus-donateLink">Make a donation</label> or <label data-l10n-name="helpus-getInvolvedLink">get involved!</label>
+ 
+@@ -84,3 +84,4 @@
+ aboutdialog-version-arch = { $version } ({ $arch })
+ 
+ aboutdialog-version-arch-nightly = { $version } ({ $isodate }) ({ $arch })
++aboutdialog-orbit-firefox-version = Built on Firefox { $version }

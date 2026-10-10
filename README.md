@@ -38,8 +38,8 @@ python3 tests/smoke.py --shots work/smoke                  # start the Mac app a
 
 | Platform | Build on | Needs | Makes (in `dist/`) |
 | --- | --- | --- | --- |
-| `mac` | macOS | Python 3, Node, clang (Xcode's command line tools) | `Orbit-Browser-<version>-macOS.dmg`, one app for Apple silicon and Intel |
-| `win64`, `win64-aarch64` | macOS or Linux | Python 3, Node (`npm ci` once), bsdtar (`libarchive-tools` on Linux), makensis (`nsis`) for the installer | `…-Windows-x64-Setup.exe` / `…-arm64-Setup.exe`, and a portable `.zip` of each |
+| `mac` | macOS | Python 3, Node, git (applies the patches), clang (Xcode's command line tools) | `Orbit-Browser-<version>-macOS.dmg`, one app for Apple silicon and Intel |
+| `win64`, `win64-aarch64` | macOS or Linux | Python 3, Node (`npm ci` once), git (applies the patches), bsdtar (`libarchive-tools` on Linux), makensis (`nsis`) for the installer | `…-Windows-x64-Setup.exe` / `…-arm64-Setup.exe`, and a portable `.zip` of each |
 
 Orbit Pass comes from the Orbit Pass checkout beside this one (`../Orbit Pass`, or
 `--orbit-pass <path>`): the build runs its `extension/scripts/package.mjs --firefox`. Downloads
@@ -54,6 +54,30 @@ and the Windows executables' product version are it too. The engine keeps Firefo
 `application.ini`, the user agent, add-ons). Raise `VERSION` for a release (tag `v<VERSION>`); a
 new Firefox alone needs no new version, since every build on `main` is newer by build number.
 
+### Where Orbit's changes live
+
+Everything Orbit Browser changes is kept apart from Mozilla's code, the way the Firefox forks (Tor
+Browser, Mullvad, LibreWolf) keep theirs, so every change is visible and nothing is quietly edited
+in place:
+
+- **Whole new files** Orbit adds — the branding (`branding/`), the start-up and update modules
+  (`browser/modules/`), its styles (`browser/content/`), the launcher (`browser/launcher/`) and the
+  policies (`distribution/policies.json`) — sit in the repository as themselves and are dropped into
+  the build.
+- **Edits to Mozilla's own files** inside `omni.ja` are **unified-diff patches in `patches/`**, one
+  file per Mozilla file (`patches/<jar>/<path>.patch`, where `<jar>` is `browser` for
+  `browser/omni.ja` or `gre` for the `omni.ja` beside it; a `# platforms:` line in a patch limits it
+  to some builds). The build applies them with `git apply`, which is strict: the lines around each
+  change must still match, so a Firefox that moved the code stops the build and names the patch and
+  hunk. Each patch is a readable diff, reviewed like any other.
+- A **few edits carry Orbit's own data** and so can't be static text — the new tab's wallpapers
+  (from `ORBIT_WALLPAPERS`) and the Orbit AI provider (from `ORBIT_AI_URL`) — so they stay in
+  `scripts/omni_patches.py`, applied by replacing a Mozilla anchor that must appear exactly once.
+
+`scripts/omni_patches.py` loads and applies all of these; `scripts/build.py` adds the whole new
+files. To change what Orbit does to a Mozilla file, edit (or add) a patch under `patches/`, never
+the omni.ja by hand.
+
 ### Moving to a new Firefox
 
 Mozilla ships a release about every four weeks and security fixes between them; Orbit Browser gets
@@ -61,15 +85,27 @@ them only by being rebuilt. GitHub checks daily and goes red when a newer Firefo
 [Builds on GitHub](#builds-on-github)). Then:
 
 ```bash
-python3 scripts/update_firefox.py              # pins the newest release in firefox.json
-python3 -m unittest discover -s tests          # every patch, policy and locked pref still fits
-python3 scripts/build.py && python3 tests/smoke.py
+python3 scripts/update_firefox.py                    # pin the newest release, then check every patch against it
+python3 scripts/build.py && python3 tests/smoke.py   # build, and check the app from inside
 ```
 
-A test that fails names the change that no longer fits: a patch whose text Firefox moved, a policy
-or pref it renamed, a file it moved. Fix that change (in `scripts/omni_patches.py`,
-`distribution/policies.json` or `scripts/build.py`); never loosen the check, or a feature that was
-removed comes back quietly.
+`update_firefox.py` pins the release in `firefox.json` and then tries every patch and generated edit
+against the new Firefox, printing which still apply and which don't. Give it a version (`158.0`) to
+pin that one instead of the newest; `--check` alone re-checks the current pin without re-pinning. A
+patch that no longer applies is one whose surrounding code Firefox moved; fix it by hand:
+
+```bash
+python3 scripts/firefox_file.py browser modules/GenAI.sys.mjs > /tmp/orig   # the pristine Mozilla file
+cp /tmp/orig /tmp/new && $EDITOR /tmp/new                                   # make Orbit's change again
+diff -u /tmp/orig /tmp/new                                                  # the patch's new body
+```
+
+Replace the body (the `--- /+++` lines and the hunks) of the failing `patches/…/*.patch` with that
+diff, then run `python3 scripts/update_firefox.py --check` again until every patch applies.
+`python3 -m unittest discover -s tests` checks the same, plus that every policy and locked pref still
+exists. **Never loosen a patch so it applies without the change it carries**, or a feature Orbit
+removed comes back quietly. (A renamed policy or pref is fixed in `distribution/policies.json`; a
+moved or renamed whole file in `scripts/build.py`.)
 
 ## Mozilla's AI features, removed
 
@@ -115,7 +151,7 @@ reports, sponsored tiles and suggestions, Mozilla's list of new-tab shortcuts an
 service, and "More from Mozilla". Firefox Relay is locked to `unavailable` (Firefox still offers
 it when it is merely "disabled"). Pocket is gone from Firefox itself.
 
-Where the policies only grey things out, `scripts/omni_patches.py` takes them away: the Help menu's
+Where the policies only grey things out, patches in `patches/` take them away: the Help menu's
 Share Ideas and Feedback, Report Broken Site, Report Deceptive Site and Switching to a New Device
 (also in the Mac's windowless menu bar, with the Smart Window items); Settings' first page loses
 Mozilla's account, Sync and "Share Firefox" groups and is called General.
@@ -305,7 +341,7 @@ Mission Control's catalog (`apps/releases/catalog.py`) has `orbit-browser` with
   Browser; a launch of `Contents/MacOS/firefox` on its own is plain Firefox, looking for the data
   folder macOS guards, and quits at once. Firefox's own self-relaunch (what the start-up profile
   selector uses to open the profile you pick) runs the engine directly and so would close the app
-  the moment you open a profile. `scripts/omni_patches.py` has the selector launch the chosen
+  the moment you open a profile. A patch (`patches/browser/…/profile-selector.mjs.patch`) has the selector launch the chosen
   profile the way the in-browser profiles panel already does — through the bundle, `launchInstance`
   → `launchAppBundle` → the launcher — then tell the start-up code to exit the selector. Windows
   runs `firefox.exe` directly with no launcher, so its selector is already fine; the patch is the
@@ -354,7 +390,7 @@ Mission Control's catalog (`apps/releases/catalog.py`) has `orbit-browser` with
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| Build | `python3 -m unittest discover -s tests` | Against the pinned Firefox (its Windows installer, unpacked anywhere): every patch matches exactly once, the files the build replaces are there, the start-up hooks it relies on exist, every policy is one this Firefox has and implements and every locked pref one it knows; Orbit's wallpapers drawn, loadable by the new tab and named apart from Mozilla's, and the built-in new tab kept; Orbit Browser's own version; the Mac app's `application.ini`; update signatures: what `scripts/sign_update.py` signs, the browser's own check accepts (run under Node by `tests/verify_signature.mjs`), as it does a file the Tauri CLI signed (`tests/fixtures/`, a throwaway key), and a changed download or another key is refused (18 tests; needs `cryptography` and Node 25 or later, for `Uint8Array.fromBase64`) |
+| Build | `python3 -m unittest discover -s tests` | Against the pinned Firefox (its Windows installer, unpacked anywhere): every patch in `patches/` still applies (with `git apply`) and every generated edit finds its anchor, the files the build replaces are there, the start-up hooks it relies on exist, every policy is one this Firefox has and implements and every locked pref one it knows; Orbit's wallpapers drawn, loadable by the new tab and named apart from Mozilla's, and the built-in new tab kept; Orbit Browser's own version; the Mac app's `application.ini`; update signatures: what `scripts/sign_update.py` signs, the browser's own check accepts (run under Node by `tests/verify_signature.mjs`), as it does a file the Tauri CLI signed (`tests/fixtures/`, a throwaway key), and a changed download or another key is refused (20 tests; the update signatures need `cryptography` and Node 25 or later, for `Uint8Array.fromBase64`) |
 | Mac app | `python3 tests/smoke.py [--shots work/smoke]` | Starts `work/mac/Orbit Browser.app` headless in a fresh profile over Marionette (`tests/marionette.py`) and checks from inside: the name, the data folder, the policies, every AI pref off and locked and every AI control blocked, the AI libraries and updater gone, Orbit AI the only chatbot and opening in the sidebar, Orbit Pass built in at its address with every site and private windows, no Mozilla account, the Orbit button and its apps, the Orbit bookmarks and no Mozilla ones, the Help menu (with Check for Updates), File menu and sidebar without Mozilla's items, Orbit Browser's version and the Firefox under it in the About window and Settings with a working Check for updates, Relay and Mozilla's shortcuts, stories and weather off, Firefox's password manager, card and address autofill and form history off and locked (its Passwords page blocked, no autofill page in Settings, no Passwords in the app menu), no "Firefox" or Mozilla account in the home page, Settings and Add-ons, and the new tab built in, offering Orbit's wallpapers first (each loading) and not the Firefox ones |
 
 The Windows builds are checked on a Mac by inspection (icons and details of the executables,
@@ -380,8 +416,10 @@ when Orbit Browser is behind.
 firefox.json              the Firefox release and the checksums of its builds
 scripts/build.py          the build: fetch, unpack, change, sign, package (VERSION: Orbit Browser's own)
 scripts/sign_update.py    sign the update payloads for Mission Control, as the Tauri apps' are
-scripts/omni_patches.py   the changes to Mozilla's own files in omni.ja, each matched exactly
-scripts/update_firefox.py pin a Firefox release
+patches/                  unified-diff patches to Mozilla's own files in omni.ja (git apply), one per file
+scripts/omni_patches.py   loads and applies patches/, plus the few edits generated from Orbit's data
+scripts/update_firefox.py pin a Firefox release and check every patch against it (--check to recheck)
+scripts/firefox_file.py   print a pristine Mozilla file from the pinned Firefox, to rewrite a patch
 scripts/build_icon.py     every form of the logo, from scripts/orbitmark.swift (the family renderer)
 scripts/wallpapers.swift  the new tab's wallpapers, into branding/content/wallpapers/
 scripts/win_resources.mjs icons and details of the Windows executables

@@ -1,0 +1,31 @@
+# Orbit Browser patch: chrome/browser/content/browser/aboutDialog.js
+#
+# The About window shows Orbit Browser's version (not Firefox's) and checks for Orbit Browser updates.
+
+--- a/chrome/browser/content/browser/aboutDialog.js
++++ b/chrome/browser/content/browser/aboutDialog.js
+@@ -53,9 +53,23 @@
+     ["base-arch-nightly", "aboutdialog-version-arch-nightly"],
+   ]);
+   let versionIdKey = "base";
++  // Orbit Browser: its own version, and the Firefox it is built on below it.
+   let versionAttributes = {
++    version: Services.prefs.getStringPref(
++      "orbitbrowser.version",
++      AppConstants.MOZ_APP_VERSION_DISPLAY
++    ),
++  };
++  document.l10n.setArgs(document.getElementById("orbitFirefoxVersion"), {
+     version: AppConstants.MOZ_APP_VERSION_DISPLAY,
+-  };
++  });
++  document
++    .getElementById("orbitCheckForUpdatesButton")
++    .addEventListener("command", () => {
++      ChromeUtils.importESModule(
++        "resource:///modules/OrbitUpdates.sys.mjs"
++      ).OrbitUpdates.check(true);
++    });
+ 
+   let arch = Services.sysinfo.get("arch");
+   if (["x86", "x86-64"].includes(arch)) {

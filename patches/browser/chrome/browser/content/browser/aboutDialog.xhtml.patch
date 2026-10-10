@@ -1,0 +1,43 @@
+# Orbit Browser patch: chrome/browser/content/browser/aboutDialog.xhtml
+#
+# The About window: the Firefox Orbit Browser is built on, under Orbit Browser's own version.
+# The About window's Check for updates button, where Firefox says its updates are off.
+
+--- a/chrome/browser/content/browser/aboutDialog.xhtml
++++ b/chrome/browser/content/browser/aboutDialog.xhtml
+@@ -64,7 +64,11 @@
+                 <description id="downloadFailed" data-l10n-id="update-failed">
+                   <label id="failedLink" is="text-link" data-l10n-name="failed-link"/>
+                 </description>
+-                <description id="policyDisabled" data-l10n-id="update-policy-disabled"/>
++                <!-- Orbit Browser: Firefox's updater is off; this asks Orbit Mission Control. -->
++                <description id="policyDisabled">
++                  <button id="orbitCheckForUpdatesButton"
++                          data-l10n-id="update-checkForUpdatesButton"/>
++                </description>
+                 <description id="noUpdatesFound" data-l10n-id="update-noUpdatesFound"/>
+                 <description id="checkingFailed" data-l10n-id="aboutdialog-update-checking-failed"/>
+                 <description id="otherInstanceHandlingUpdates" data-l10n-id="update-otherInstanceHandlingUpdates"/>
+@@ -81,10 +85,18 @@
+                 <description id="noUpdater"/>
+               </deck>
+               <!-- This HBOX is duplicated above without class="update" -->
+-              <hbox align="baseline">
+-                <label id="version" class="update"/>
+-                <label id="releasenotes" is="text-link" hidden="true" data-l10n-id="releaseNotes-link"/>
+-              </hbox>
++              <!-- Orbit Browser: its version, and under it the Firefox it is built on
++                   with Firefox's release notes; one box, as #updateInfo is a
++                   grid of three rows. -->
++              <vbox>
++                <hbox align="baseline">
++                  <label id="version" class="update"/>
++                </hbox>
++                <hbox align="baseline">
++                  <label id="orbitFirefoxVersion" data-l10n-id="aboutdialog-orbit-firefox-version"/>
++                  <label id="releasenotes" is="text-link" hidden="true" data-l10n-id="releaseNotes-link"/>
++                </hbox>
++              </vbox>
+               <description class="text-blurb">
+                 <label id="aboutDialogHelpLink" is="text-link" data-l10n-id="aboutdialog-help-user"/>
+                 <label id="submit-feedback" is="text-link" data-l10n-id="aboutdialog-submit-feedback"/>

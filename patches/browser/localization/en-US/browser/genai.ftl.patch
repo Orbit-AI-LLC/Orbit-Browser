@@ -1,0 +1,60 @@
+# Orbit Browser patch: localization/en-US/browser/genai.ftl
+#
+# Context menu.
+# Context menu.
+# Context menu.
+# The selection shortcut's box.
+# The sidebar's heading.
+# Sidebar menu.
+
+--- a/localization/en-US/browser/genai.ftl
++++ b/localization/en-US/browser/genai.ftl
+@@ -32,18 +32,18 @@
+     .label = Ask…
+     .accesskey = z
+ genai-menu-no-provider-2 =
+-    .label = Ask an AI Chatbot
++    .label = Ask Orbit AI
+     .accesskey = z
+ genai-menu-choose-chatbot =
+     .label = Choose an AI Chatbot
+ genai-menu-ask-generic-2 =
+-    .label = Ask AI Chatbot
++    .label = Ask Orbit AI
+     .accesskey = z
+ genai-menu-ask-provider-2 =
+     .label = Ask { $provider }
+     .accesskey = z
+ genai-menu-open-generic =
+-    .label = Open AI Chatbot
++    .label = Open Orbit AI
+ genai-menu-open-provider =
+     .label = Open { $provider }
+ genai-menu-remove-generic =
+@@ -61,7 +61,7 @@
+ genai-input-ask-smart-window =
+     .placeholder = Ask…
+ genai-input-ask-generic =
+-    .placeholder = Ask AI chatbot…
++    .placeholder = Ask Orbit AI…
+ genai-input-ask-provider =
+     .placeholder = Ask { $provider }…
+ 
+@@ -79,7 +79,7 @@
+     .label = Hide chatbot shortcut
+ 
+ 
+-genai-chatbot-title = AI chatbot
++genai-chatbot-title = Orbit AI
+ genai-header-provider-menu =
+     .title = Choose a chatbot
+ genai-header-settings-button =
+@@ -90,7 +90,7 @@
+ genai-provider-view-details =
+     .label = View chatbot details
+ genai-options-reload-generic =
+-    .label = Reload AI chatbot
++    .label = Reload Orbit AI
+ genai-options-reload-provider =
+     .label = Reload { $provider }
+ genai-options-show-shortcut =

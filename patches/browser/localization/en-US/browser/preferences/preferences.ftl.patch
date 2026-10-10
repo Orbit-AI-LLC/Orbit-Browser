@@ -1,0 +1,22 @@
+# Orbit Browser patch: localization/en-US/browser/preferences/preferences.ftl
+#
+# Its heading.
+# Its name in Settings' list.
+
+--- a/localization/en-US/browser/preferences/preferences.ftl
++++ b/localization/en-US/browser/preferences/preferences.ftl
+@@ -1154,10 +1154,10 @@
+ 
+ 
+ account-sync-section =
+-    .heading = Account and sync
+-
+-pane-account-sync-title2 = Account and sync
+-    .title = Account and sync
++    .heading = General
++
++pane-account-sync-title2 = General
++    .title = General
+ 
+ sync-group-label =
+     .label = Sync

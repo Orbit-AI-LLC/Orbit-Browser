@@ -1,0 +1,23 @@
+# Orbit Browser patch: chrome/browser/content/browser/browser-safebrowsing.js
+#
+# Report Deceptive Site goes with the other feedback commands rather than staying greyed out.
+# And its This Isn't a Deceptive Site.
+
+--- a/chrome/browser/content/browser/browser-safebrowsing.js
++++ b/chrome/browser/content/browser/browser-safebrowsing.js
+@@ -17,11 +17,13 @@
+     const reportMenu = document.getElementById(
+       "menu_HelpPopup_reportPhishingtoolmenu"
+     );
+-    reportMenu.hidden = isPhishingPage;
++    reportMenu.hidden =
++      isPhishingPage || !Services.policies.isAllowed("feedbackCommands");
+     const reportErrorMenu = document.getElementById(
+       "menu_HelpPopup_reportPhishingErrortoolmenu"
+     );
+-    reportErrorMenu.hidden = !isPhishingPage;
++    reportErrorMenu.hidden =
++      !isPhishingPage || !Services.policies.isAllowed("feedbackCommands");
+ 
+     // Now look at the currentURI to learn which page we were trying
+     // to browse to.

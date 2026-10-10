@@ -1,0 +1,39 @@
+# Orbit Browser patch: localization/en-US/browser/sidebar.ftl
+#
+# View > Sidebar names Orbit AI.
+# The sidebar's tool names Orbit AI.
+# Tooltip.
+# Tooltip.
+
+--- a/localization/en-US/browser/sidebar.ftl
++++ b/localization/en-US/browser/sidebar.ftl
+@@ -1,6 +1,6 @@
+ 
+ menu-view-genai-chat =
+-  .label = AI Chatbot
++  .label = Orbit AI
+ 
+ menu-view-contextual-password-manager =
+   .label = Passwords
+@@ -150,7 +150,7 @@
+ 
+ 
+ sidebar-menu-genai-chat-label =
+-  .label = AI chatbot
++  .label = Orbit AI
+ sidebar-menu-history-label =
+   .label = History
+ sidebar-menu-synced-tabs-label =
+@@ -178,10 +178,10 @@
+ sidebar-menu-close-bookmarks-tooltip = Close bookmarks ({ $shortcut })
+ 
+ 
+-sidebar-menu-open-ai-chatbot-tooltip-generic = Open AI chatbot ({ $shortcut })
++sidebar-menu-open-ai-chatbot-tooltip-generic = Open Orbit AI ({ $shortcut })
+ sidebar-menu-open-ai-chatbot-provider-tooltip = Open { $provider } ({ $shortcut })
+ 
+-sidebar-menu-close-ai-chatbot-tooltip-generic = Close AI chatbot ({ $shortcut })
++sidebar-menu-close-ai-chatbot-tooltip-generic = Close Orbit AI ({ $shortcut })
+ sidebar-menu-close-ai-chatbot-provider-tooltip = Close { $provider } ({ $shortcut })
+ 
+ 

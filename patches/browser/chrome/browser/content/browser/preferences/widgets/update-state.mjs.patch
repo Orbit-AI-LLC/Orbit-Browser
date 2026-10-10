@@ -1,0 +1,34 @@
+# Orbit Browser patch: chrome/browser/content/browser/preferences/widgets/update-state.mjs
+#
+# Settings' Check for updates button works, for Orbit Browser's updates.
+# What that button does.
+
+--- a/chrome/browser/content/browser/preferences/widgets/update-state.mjs
++++ b/chrome/browser/content/browser/preferences/widgets/update-state.mjs
+@@ -57,9 +57,12 @@
+     buttonAction: "check",
+   },
+   policyDisabled: {
++    // Orbit Browser: Firefox's updater is off; the button asks Orbit Mission
++    // Control instead (OrbitUpdates.sys.mjs).
+     l10nId: "settings-update-policy-disabled",
+     buttonL10nId: "update-checkForUpdatesButton",
+-    buttonDisabled: true,
++    buttonId: "checkForUpdatesButton",
++    buttonAction: "orbit",
+   },
+   noUpdatesFound: {
+     l10nId: "settings-update-no-updates-found",
+@@ -146,6 +149,12 @@
+ 
+   handleButtonClick() {
+     let { buttonAction } = updateStatusToMetadata[this.value];
++    if (buttonAction === "orbit") {
++      ChromeUtils.importESModule(
++        "resource:///modules/OrbitUpdates.sys.mjs"
++      ).OrbitUpdates.check(true);
++      return;
++    }
+     if (!buttonAction || !window.gAppUpdater) {
+       return;
+     }

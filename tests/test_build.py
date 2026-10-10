@@ -4,8 +4,8 @@
 
 Reads Firefox's own omni.ja files from the pinned Windows x64 installer
 (downloaded into .cache/ the first time, checked against Mozilla's SHA-512;
-any platform can unpack it) and checks that each patch matches exactly once,
-that the files the build replaces are still there, and that every policy and
+any platform can unpack it) and checks that each patch in patches/ still
+applies, that the files the build replaces are still there, and that every policy and
 locked pref in distribution/policies.json is one this Firefox knows. A new
 Firefox that moves any of these fails here, by name, before a build ships
 without it.
@@ -37,25 +37,37 @@ _JARS: dict = {}
 def firefox_jars() -> dict:
     """browser/omni.ja and omni.ja of the pinned Firefox, read once."""
     if not _JARS:
-        installer = build.fetch_firefox("win64")
-        data = installer.read_bytes()
-        with tempfile.TemporaryDirectory() as tmp:
-            archive = Path(tmp) / "payload.7z"
-            archive.write_bytes(data[data.find(b"7z\xbc\xaf\x27\x1c"):])
-            subprocess.run([build.bsdtar(), "-xf", str(archive), "-C", tmp, "core/omni.ja", "core/browser/omni.ja"], check=True)
-            _JARS["browser"] = build.read_jar(Path(tmp) / "core" / "browser" / "omni.ja")
-            _JARS["gre"] = build.read_jar(Path(tmp) / "core" / "omni.ja")
+        _JARS.update(build.read_jars("win64"))
     return _JARS
 
 
 class PatchTests(unittest.TestCase):
-    def test_every_patch_matches_exactly_once(self):
+    def test_every_patch_applies_to_this_firefox(self):
+        """Each patches/**/*.patch still applies with git apply (context and
+        all); a new Firefox that moved the code fails here, by name."""
         jars = firefox_jars()
+        patches = omni_patches.load_patches()
+        self.assertTrue(patches, "no patches found under patches/")
         # The pinned Windows build: patches for the Mac alone are checked by the Mac build.
-        for patch in (p for p in omni_patches.PATCHES if "windows" in p.platforms):
-            with self.subTest(patch=f"{patch.jar}:{patch.path}", why=patch.why):
+        for patch in (p for p in patches if "windows" in p.platforms):
+            with self.subTest(patch=str(patch.file.relative_to(ROOT)), why=patch.why):
                 self.assertIn(patch.path, jars[patch.jar])
-                omni_patches.apply(patch, jars[patch.jar][patch.path].decode())
+                omni_patches.git_apply(patch, jars[patch.jar][patch.path].decode())
+
+    def test_every_generated_edit_applies_to_this_firefox(self):
+        """The edits built from Orbit's data (the Orbit AI provider, the
+        wallpapers) still find their anchor exactly once."""
+        jars = firefox_jars()
+        for generated in omni_patches.GENERATED:
+            with self.subTest(edit=f"{generated.jar}:{generated.path}", why=generated.why):
+                self.assertIn(generated.path, jars[generated.jar])
+                omni_patches.apply_generated(generated, jars[generated.jar][generated.path].decode())
+
+    def test_the_appended_stylesheets_are_still_there(self):
+        jars = firefox_jars()
+        for (jar, path) in omni_patches.APPENDED_STYLES:
+            with self.subTest(path=path):
+                self.assertIn(path, jars[jar])
 
     def test_the_files_the_build_replaces_are_still_there(self):
         browser = firefox_jars()["browser"]

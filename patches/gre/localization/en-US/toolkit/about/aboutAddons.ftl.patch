@@ -1,0 +1,25 @@
+# Orbit Browser patch: localization/en-US/toolkit/about/aboutAddons.ftl
+#
+# Mozilla's Recommended Extensions program, named for who runs it.
+# The same program's badge.
+
+--- a/localization/en-US/toolkit/about/aboutAddons.ftl
++++ b/localization/en-US/toolkit/about/aboutAddons.ftl
+@@ -285,7 +285,7 @@
+     Extensions and themes let you customize { -brand-product-name }. They can boost privacy,
+     enhance productivity, improve media, change the way { -brand-product-name } looks, and
+     so much more. These small software programs are often developed by a third party. Here’s
+-    a selection Firefox <a data-l10n-name="learn-more-trigger">recommends</a> for
++    a selection Mozilla <a data-l10n-name="learn-more-trigger">recommends</a> for
+     exceptional security, performance, and functionality.
+ 
+ discopane-notice-recommendations2 =
+@@ -407,7 +407,7 @@
+ 
+ 
+ addon-badge-recommended4 =
+-  .title = Firefox only recommends extensions that meet standards for security and performance
++  .title = Mozilla only recommends extensions that meet standards for security and performance
+ addon-badge-line4 =
+   .title = Official extension built by Mozilla. Meets security and performance standards
+ addon-badge-verified4 =

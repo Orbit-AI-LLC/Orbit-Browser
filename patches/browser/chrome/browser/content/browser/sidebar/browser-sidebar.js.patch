@@ -1,0 +1,26 @@
+# Orbit Browser patch: chrome/browser/content/browser/sidebar/browser-sidebar.js
+#
+# Synced Tabs is registered only when Mozilla accounts are on.
+# The end of that entry.
+
+--- a/chrome/browser/content/browser/sidebar/browser-sidebar.js
++++ b/chrome/browser/content/browser/sidebar/browser-sidebar.js
+@@ -142,7 +142,8 @@
+           recordSidebarVersion: true,
+         }),
+       ],
+-      [
++      // Orbit Browser: Synced Tabs only with a Mozilla account.
++      ...(Services.prefs.getBoolPref("identity.fxaccounts.enabled", true) ? [[
+         "viewTabsSidebar",
+         this.makeSidebar({
+           name: "syncedtabs",
+@@ -160,7 +161,7 @@
+             : undefined,
+           gleanClickEvent: Glean.sidebar.syncedTabsIconClick,
+         }),
+-      ],
++      ]] : []),
+       [
+         "viewBookmarksSidebar",
+         this.makeSidebar({

@@ -1,0 +1,15 @@
+# Orbit Browser patch: chrome/browser/content/browser/browser.xhtml
+#
+# Report Broken Site starts hidden; Firefox shows it again only if feedback is allowed.
+
+--- a/chrome/browser/content/browser/browser.xhtml
++++ b/chrome/browser/content/browser/browser.xhtml
+@@ -6158,7 +6158,7 @@
+                 data-l10n-id="menu-get-help"
+                 appmenu-data-l10n-id="appmenu-get-help"
+                 />
+-      <menuitem id="help_reportBrokenSite"
++      <menuitem id="help_reportBrokenSite" hidden="true"
+                 command="cmd_reportBrokenSite"
+                 data-l10n-id="menu-report-broken-site"
+                 disabled="true"

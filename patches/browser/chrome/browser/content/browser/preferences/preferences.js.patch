@@ -1,0 +1,40 @@
+# Orbit Browser patch: chrome/browser/content/browser/preferences/preferences.js
+#
+# Settings' first page without Mozilla's account, Sync and referral groups.
+# Settings has no Passwords and autofill page: everything on it is Firefox's own autofill, which is off.
+
+--- a/chrome/browser/content/browser/preferences/preferences.js
++++ b/chrome/browser/content/browser/preferences/preferences.js
+@@ -413,7 +413,9 @@
+     groupIds: ["passwords", "payments", "addresses", "personalInfo"],
+     module:
+       "chrome://browser/content/preferences/config/passwords-autofill.mjs",
+-    visible: () => srdSectionEnabled("passwordsAutofill"),
++    // Orbit Browser: Firefox's passwords, cards and addresses are off and
++    // locked (distribution/policies.json); Orbit Pass fills instead.
++    visible: () => false,
+   },
+   privacy: {
+     l10nId: "pane-privacy-section",
+@@ -446,17 +448,10 @@
+   },
+   sync: {
+     l10nId: "account-sync-section",
+-    iconSrc: "chrome://browser/skin/fxa/avatar-empty.svg",
+-    groupIds: [
+-      "defaultBrowserSync",
+-      "accountDisabled",
+-      "account",
+-      "sync",
+-      "importBrowserData",
+-      "profiles",
+-      "backup",
+-      "referrals",
+-    ],
++    // Orbit Browser: the page keeps the default browser, importing, profiles
++    // and backup; Mozilla's account, Sync and "Share Firefox" go.
++    iconSrc: "chrome://global/skin/icons/settings.svg",
++    groupIds: ["defaultBrowserSync", "importBrowserData", "profiles", "backup"],
+     module: "chrome://browser/content/preferences/config/account-sync.mjs",
+     replaces: "sync",
+   },

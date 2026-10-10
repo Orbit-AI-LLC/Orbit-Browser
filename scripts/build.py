@@ -238,6 +238,29 @@ def read_jar(path: Path) -> dict[str, bytes]:
     return entries
 
 
+def read_jars(platform: str = "win64") -> dict[str, dict[str, bytes]]:
+    """browser/omni.ja and omni.ja of the pinned Firefox, read out for checking
+    the patches against it (tests, scripts/update_firefox.py). The Windows
+    build unpacks on any OS; the Mac build needs a Mac. This is not the build
+    path -- build_mac / build_windows read the unpacked app in place."""
+    if platform == "mac":
+        dmg = fetch_firefox("mac")
+        with tempfile.TemporaryDirectory() as mount:
+            run("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg, stdout=subprocess.DEVNULL)
+            try:
+                res = Path(mount) / "Firefox.app" / "Contents" / "Resources"
+                return {"browser": read_jar(res / "browser" / "omni.ja"), "gre": read_jar(res / "omni.ja")}
+            finally:
+                run("hdiutil", "detach", mount, "-quiet")
+    installer = fetch_firefox(platform)
+    data = installer.read_bytes()
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "payload.7z"
+        archive.write_bytes(data[data.find(b"7z\xbc\xaf\x27\x1c"):])
+        run(bsdtar(), "-xf", archive, "-C", tmp, "core/omni.ja", "core/browser/omni.ja")
+        return {"browser": read_jar(Path(tmp) / "core" / "browser" / "omni.ja"), "gre": read_jar(Path(tmp) / "core" / "omni.ja")}
+
+
 def orbit_pass_files(checkout: Path) -> dict[str, bytes]:
     """Orbit Pass's Firefox package, made by its own packager, as the files
     of a built-in add-on: privileged, so its host permissions are granted at
@@ -267,18 +290,13 @@ def customize_omni(resources: Path, *, platform: str, version: str, build: int, 
     browser = Jar(resources / "browser" / "omni.ja")
     gre = Jar(resources / "omni.ja")
 
-    for patch in omni_patches.PATCHES:
-        if platform not in patch.platforms:
-            continue
-        jar = browser if patch.jar == "browser" else gre
-        try:
-            jar.replace(patch.path, omni_patches.apply(patch, jar.text(patch.path)))
-        except omni_patches.PatchError as error:
-            raise SystemExit(str(error))
-
-    for (jar_name, path), css in omni_patches.APPENDED_STYLES.items():
-        jar = browser if jar_name == "browser" else gre
-        jar.replace(path, jar.text(path) + css)
+    # The changes to Mozilla's own files: the .patch files under patches/, then
+    # the generated edits and appends (scripts/omni_patches.py). Each raises if
+    # it no longer fits this Firefox, naming the file.
+    try:
+        omni_patches.apply_all({"browser": browser, "gre": gre}, platform)
+    except omni_patches.PatchError as error:
+        raise SystemExit(str(error))
 
     branding = "chrome/browser/content/branding/"
     for source in sorted((BRANDING / "content").rglob("*")):
@@ -305,10 +323,6 @@ def customize_omni(resources: Path, *, platform: str, version: str, build: int, 
     # Its updates (as the other Orbit apps get them) and their signature check.
     for name in ("OrbitUpdates.sys.mjs", "OrbitSignature.sys.mjs"):
         browser.add(f"modules/{name}", (ROOT / "browser" / "modules" / name).read_bytes())
-    browser.replace(
-        "components/components.manifest",
-        browser.text("components/components.manifest") + omni_patches.COMPONENT_CATEGORIES,
-    )
 
     # The stamp covers everything this build put in, so it changes exactly
     # when Orbit Browser's own files do (OrbitBrowser.dropCachesFromOtherBuilds).

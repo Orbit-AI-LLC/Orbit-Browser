@@ -1,0 +1,28 @@
+# Orbit Browser patch: chrome/browser/content/browser/profiles/profile-selector.mjs
+# platforms: mac
+#
+# The start-up profile selector opens the chosen profile through the app bundle.
+
+--- a/chrome/browser/content/browser/profiles/profile-selector.mjs
++++ b/chrome/browser/content/browser/profiles/profile-selector.mjs
+@@ -122,11 +122,17 @@
+   }
+ 
+   async launchProfile(profile, url) {
++    // Orbit Browser: launch through the app bundle (so the launcher runs and
++    // sets XUL_APP_FILE) instead of the native launchWithProfile relaunch,
++    // which runs the engine directly and loses Orbit Browser's data folder.
++    this.selectableProfileService.launchInstance(profile, url ? [url] : []);
+     if (this.isStartupUI) {
+-      await this.setLaunchArguments(profile, url ? ["-url", url] : []);
++      if (this.#startupParams) {
++        this.#startupParams.SetInt(0, Ci.nsIToolkitProfileService.exit);
++        this.#startupParams.SetInt(1, 0);
++        this.#startupParams.SetInt(2, 0);
++      }
+       await this.selectableProfileService.uninit();
+-    } else {
+-      this.selectableProfileService.launchInstance(profile, url ? [url] : []);
+     }
+ 
+     window.close();

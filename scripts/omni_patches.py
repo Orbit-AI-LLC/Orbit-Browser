@@ -1,18 +1,38 @@
-"""The changes Orbit Browser makes to Mozilla's own files inside omni.ja.
+"""Orbit Browser's changes to Mozilla's own files inside omni.ja.
 
-Each one replaces an exact piece of text that must appear exactly once in the
-pinned Firefox; when a new Firefox moves it, the build stops and names the
-patch (and tests/test_patches.py fails). Fix the anchor then, never loosen the
-check: a patch that quietly stops applying would quietly bring a feature back.
+There are two kinds, and both keep every change visible and in its own place:
 
-Files Orbit Browser adds or replaces whole (the branding, its prefs, its
-start-up module, the built-in add-ons) are listed in scripts/build.py instead.
+- **Hand-written edits** are unified-diff **.patch files under `patches/`**, one
+  per Mozilla file, applied with `git apply` at build time. This is how the
+  Firefox forks keep their changes (Tor Browser, Mullvad, LibreWolf). `git apply`
+  is strict: the context around each change must still match, so when a new
+  Firefox moves the code the build stops and names the file and hunk. Fix the
+  patch then (see the README, "Moving to a new Firefox"); never loosen it, or a
+  feature Orbit removed comes back quietly. `patches/<jar>/<path>.patch` says
+  which omni.ja the file is in (`browser` or `gre`) by its first folder; a
+  `# platforms:` line in the header limits a patch to some builds.
+
+- **Generated edits** (below) inject content built from Orbit's own data: the
+  Orbit AI provider from ORBIT_AI_URL and the new tab's wallpapers from
+  ORBIT_WALLPAPERS. They can't be static text, so they stay here, applied by
+  replacing an exact Mozilla anchor that must appear exactly once. Two small
+  appends (a stylesheet and the start-up categories) are here for the same
+  reason.
+
+Whole new Orbit files (the branding, the start-up module, the built-in add-ons)
+are added by scripts/build.py, not here.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PATCHES_DIR = ROOT / "patches"
 
 #: Orbit AI's address for the browser: a fresh New Orbit each time (see
 #: Orbit AI's README, "Orbit AI in Orbit Browser"). distribution/policies.json
@@ -84,19 +104,6 @@ ORBIT_WALLPAPER_NAMES = "newtab-wallpaper-category-title-firefox = { -brand-prod
     f"newtab-wallpaper-{w['title']} = {w['name']}\n" for w in ORBIT_WALLPAPERS
 )
 
-
-@dataclass(frozen=True)
-class Patch:
-    #: "browser" (browser/omni.ja) or "gre" (the omni.ja beside it).
-    jar: str
-    path: str
-    old: str
-    new: str
-    why: str
-    #: The builds the file is in ("mac", "windows"): some are one platform's.
-    platforms: tuple[str, ...] = ("mac", "windows")
-
-
 ORBIT_AI_PROVIDER = f"""  chatProviders: new Map([
     // Orbit Browser: Orbit AI, the only chatbot it offers (browser.ml.chat.providers
     // is locked to "orbitai", which hides the others). The prompt is typed into
@@ -115,419 +122,125 @@ ORBIT_AI_PROVIDER = f"""  chatProviders: new Map([
     ],
 """
 
-PATCHES: list[Patch] = [
-    # -- Orbit AI in the sidebar --------------------------------------------------------
-    Patch(
-        "browser",
-        "modules/GenAI.sys.mjs",
-        "  chatProviders: new Map([\n",
-        ORBIT_AI_PROVIDER,
+
+# -- the hand-written edits: the .patch files under patches/ -----------------------------
+
+
+class PatchError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class StaticPatch:
+    #: The .patch file.
+    file: Path
+    #: "browser" (browser/omni.ja) or "gre" (the omni.ja beside it): the first
+    #: folder under patches/.
+    jar: str
+    #: The file inside that omni.ja the diff changes (from its "+++ b/…" line).
+    path: str
+    #: The builds the patch is for; all unless a "# platforms:" line narrows it.
+    platforms: tuple[str, ...]
+    #: Why, from the header comment, for the build and test messages.
+    why: str
+    #: The unified diff itself (from the first "--- " line on).
+    body: str
+
+
+def load_patches() -> list[StaticPatch]:
+    """Every patches/**/*.patch, parsed. The header is the comment lines before
+    the diff: "# platforms: mac windows" narrows the builds, the rest is why."""
+    patches = []
+    for file in sorted(PATCHES_DIR.rglob("*.patch")):
+        rel = file.relative_to(PATCHES_DIR)
+        jar = rel.parts[0]
+        if jar not in ("browser", "gre"):
+            raise PatchError(f"{file}: must be under patches/browser/ or patches/gre/.")
+        platforms = ("mac", "windows")
+        why = []
+        lines = file.read_text().splitlines(keepends=True)
+        start = next((i for i, line in enumerate(lines) if line.startswith("--- ")), None)
+        if start is None:
+            raise PatchError(f"{file}: has no unified diff (no '--- ' line).")
+        for line in lines[:start]:
+            text = line.lstrip("#").strip()
+            if text.lower().startswith("platforms:"):
+                platforms = tuple(text.split(":", 1)[1].split())
+            elif text and not text.startswith("Orbit Browser patch"):
+                why.append(text)
+        body = "".join(lines[start:])
+        plus = next(line for line in body.splitlines() if line.startswith("+++ "))
+        path = plus[4:].strip().split("\t")[0]
+        path = path[2:] if path.startswith("b/") else path
+        patches.append(StaticPatch(file, jar, path, platforms, " ".join(why), body))
+    return patches
+
+
+def git_apply(patch: StaticPatch, text: str) -> str:
+    """The patch applied to one file's text with `git apply` (strict: the
+    context must still match). Raises PatchError, naming the file, if it doesn't."""
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / patch.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        result = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", "-p1"],
+            input=patch.body, text=True, cwd=tmp, capture_output=True,
+        )
+        if result.returncode != 0:
+            raise PatchError(
+                f"Patch {patch.file.relative_to(ROOT)} no longer applies to this Firefox.\n"
+                f"  Change: {patch.why}\n"
+                f"  git apply: {result.stderr.strip()}"
+            )
+        return target.read_text()
+
+
+# -- the generated edits: Orbit's own data into a Mozilla file ---------------------------
+
+
+@dataclass(frozen=True)
+class Generated:
+    #: "browser" or "gre".
+    jar: str
+    path: str
+    #: The exact Mozilla text to replace; it must appear exactly once.
+    old: str
+    new: str
+    why: str
+
+
+GENERATED: list[Generated] = [
+    Generated(
+        "browser", "modules/GenAI.sys.mjs",
+        "  chatProviders: new Map([\n", ORBIT_AI_PROVIDER,
         "Adds Orbit AI to the chatbot providers; the locked prefs make it the only one.",
     ),
-    Patch(
-        "browser",
-        "actors/GenAIChild.sys.mjs",
-        """'#prompt-textarea, [contenteditable], [role="textbox"]'""",
-        """'#composer-input, #prompt-textarea, [contenteditable], [role="textbox"]'""",
-        "Lets the sidebar type a prompt into Orbit AI's composer (textarea#composer-input).",
-    ),
-    # The sidebar's and menus' names for the chatbot when they don't name the
-    # provider. With the provider locked they mostly say "Orbit AI" already.
-    Patch("browser", "localization/en-US/browser/sidebar.ftl",
-          "menu-view-genai-chat =\n  .label = AI Chatbot\n",
-          "menu-view-genai-chat =\n  .label = Orbit AI\n",
-          "View > Sidebar names Orbit AI."),
-    Patch("browser", "localization/en-US/browser/sidebar.ftl",
-          "sidebar-menu-genai-chat-label =\n  .label = AI chatbot\n",
-          "sidebar-menu-genai-chat-label =\n  .label = Orbit AI\n",
-          "The sidebar's tool names Orbit AI."),
-    Patch("browser", "localization/en-US/browser/sidebar.ftl",
-          "sidebar-menu-open-ai-chatbot-tooltip-generic = Open AI chatbot ({ $shortcut })\n",
-          "sidebar-menu-open-ai-chatbot-tooltip-generic = Open Orbit AI ({ $shortcut })\n",
-          "Tooltip."),
-    Patch("browser", "localization/en-US/browser/sidebar.ftl",
-          "sidebar-menu-close-ai-chatbot-tooltip-generic = Close AI chatbot ({ $shortcut })\n",
-          "sidebar-menu-close-ai-chatbot-tooltip-generic = Close Orbit AI ({ $shortcut })\n",
-          "Tooltip."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-menu-ask-generic-2 =\n    .label = Ask AI Chatbot\n",
-          "genai-menu-ask-generic-2 =\n    .label = Ask Orbit AI\n",
-          "Context menu."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-menu-no-provider-2 =\n    .label = Ask an AI Chatbot\n",
-          "genai-menu-no-provider-2 =\n    .label = Ask Orbit AI\n",
-          "Context menu."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-menu-open-generic =\n    .label = Open AI Chatbot\n",
-          "genai-menu-open-generic =\n    .label = Open Orbit AI\n",
-          "Context menu."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-input-ask-generic =\n    .placeholder = Ask AI chatbot…\n",
-          "genai-input-ask-generic =\n    .placeholder = Ask Orbit AI…\n",
-          "The selection shortcut's box."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-chatbot-title = AI chatbot\n",
-          "genai-chatbot-title = Orbit AI\n",
-          "The sidebar's heading."),
-    Patch("browser", "localization/en-US/browser/genai.ftl",
-          "genai-options-reload-generic =\n    .label = Reload AI chatbot\n",
-          "genai-options-reload-generic =\n    .label = Reload Orbit AI\n",
-          "Sidebar menu."),
-    # -- the about dialog: who makes what ---------------------------------------------------
-    Patch(
-        "browser",
-        "localization/en-US/browser/aboutDialog.ftl",
-        'community-exp = <label data-l10n-name="community-exp-mozillaLink">{ -vendor-short-name }</label> is a <label data-l10n-name="community-exp-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.\n',
-        'community-exp = { -brand-short-name } is built on Firefox, made by <label data-l10n-name="community-exp-mozillaLink">Mozilla</label> and a <label data-l10n-name="community-exp-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.\n',
-        "With the vendor renamed, Firefox's line would credit Orbit with Mozilla's work.",
-    ),
-    Patch(
-        "browser",
-        "localization/en-US/browser/aboutDialog.ftl",
-        'community-2 = { -brand-short-name } is designed by <label data-l10n-name="community-mozillaLink">{ -vendor-short-name }</label>, a <label data-l10n-name="community-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.\n',
-        'community-2 = { -brand-short-name } is made by Orbit on Firefox, which is designed by <label data-l10n-name="community-mozillaLink">Mozilla</label>, a <label data-l10n-name="community-creditsLink">global community</label> working together to keep the Web open, public and accessible to all.\n',
-        "The same, in the other form of the line.",
-    ),
-    # -- versions and updates: Orbit Browser's own, as in the other Orbit apps -------------
-    # Firefox's updater is off on purpose (it would install Mozilla's Firefox);
-    # OrbitUpdates.sys.mjs updates the browser instead. The About window and
-    # Settings show Orbit Browser's version, the Firefox it is built on under
-    # it, and a Check for Updates button that asks Orbit Mission Control.
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/aboutDialog.xhtml",
-        """              <hbox align="baseline">
-                <label id="version" class="update"/>
-                <label id="releasenotes" is="text-link" hidden="true" data-l10n-id="releaseNotes-link"/>
-              </hbox>
-""",
-        """              <!-- Orbit Browser: its version, and under it the Firefox it is built on
-                   with Firefox's release notes; one box, as #updateInfo is a
-                   grid of three rows. -->
-              <vbox>
-                <hbox align="baseline">
-                  <label id="version" class="update"/>
-                </hbox>
-                <hbox align="baseline">
-                  <label id="orbitFirefoxVersion" data-l10n-id="aboutdialog-orbit-firefox-version"/>
-                  <label id="releasenotes" is="text-link" hidden="true" data-l10n-id="releaseNotes-link"/>
-                </hbox>
-              </vbox>
-""",
-        "The About window: the Firefox Orbit Browser is built on, under Orbit Browser's own version.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/aboutDialog.xhtml",
-        """                <description id="policyDisabled" data-l10n-id="update-policy-disabled"/>
-""",
-        """                <!-- Orbit Browser: Firefox's updater is off; this asks Orbit Mission Control. -->
-                <description id="policyDisabled">
-                  <button id="orbitCheckForUpdatesButton"
-                          data-l10n-id="update-checkForUpdatesButton"/>
-                </description>
-""",
-        "The About window's Check for updates button, where Firefox says its updates are off.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/aboutDialog.js",
-        """  let versionAttributes = {
-    version: AppConstants.MOZ_APP_VERSION_DISPLAY,
-  };
-""",
-        """  // Orbit Browser: its own version, and the Firefox it is built on below it.
-  let versionAttributes = {
-    version: Services.prefs.getStringPref(
-      "orbitbrowser.version",
-      AppConstants.MOZ_APP_VERSION_DISPLAY
-    ),
-  };
-  document.l10n.setArgs(document.getElementById("orbitFirefoxVersion"), {
-    version: AppConstants.MOZ_APP_VERSION_DISPLAY,
-  });
-  document
-    .getElementById("orbitCheckForUpdatesButton")
-    .addEventListener("command", () => {
-      ChromeUtils.importESModule(
-        "resource:///modules/OrbitUpdates.sys.mjs"
-      ).OrbitUpdates.check(true);
-    });
-""",
-        "The About window shows Orbit Browser's version (not Firefox's) and checks for Orbit Browser updates.",
-    ),
-    Patch("browser", "localization/en-US/browser/aboutDialog.ftl",
-          "aboutdialog-version-arch-nightly = { $version } ({ $isodate }) ({ $arch })\n",
-          "aboutdialog-version-arch-nightly = { $version } ({ $isodate }) ({ $arch })\n"
-          "aboutdialog-orbit-firefox-version = Built on Firefox { $version }\n",
-          "The About window's line naming the Firefox Orbit Browser is built on."),
-    Patch("browser", "localization/en-US/browser/aboutDialog.ftl",
-          "settings-update-policy-disabled =\n    .label = Updates disabled by your organization\n",
-          "settings-update-policy-disabled =\n    .label = { -brand-short-name } downloads new versions itself and asks before it restarts\n",
-          "Settings' update section: Firefox's updater is off, Orbit Browser's own is on."),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/preferences/widgets/update-state.mjs",
-        """  policyDisabled: {
-    l10nId: "settings-update-policy-disabled",
-    buttonL10nId: "update-checkForUpdatesButton",
-    buttonDisabled: true,
-  },
-""",
-        """  policyDisabled: {
-    // Orbit Browser: Firefox's updater is off; the button asks Orbit Mission
-    // Control instead (OrbitUpdates.sys.mjs).
-    l10nId: "settings-update-policy-disabled",
-    buttonL10nId: "update-checkForUpdatesButton",
-    buttonId: "checkForUpdatesButton",
-    buttonAction: "orbit",
-  },
-""",
-        "Settings' Check for updates button works, for Orbit Browser's updates.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/preferences/widgets/update-state.mjs",
-        """    let { buttonAction } = updateStatusToMetadata[this.value];
-    if (!buttonAction || !window.gAppUpdater) {
-""",
-        """    let { buttonAction } = updateStatusToMetadata[this.value];
-    if (buttonAction === "orbit") {
-      ChromeUtils.importESModule(
-        "resource:///modules/OrbitUpdates.sys.mjs"
-      ).OrbitUpdates.check(true);
-      return;
-    }
-    if (!buttonAction || !window.gAppUpdater) {
-""",
-        "What that button does.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/preferences/config/about-firefox.mjs",
-        """    let version = AppConstants.MOZ_APP_VERSION_DISPLAY;
-    let distribution;
-""",
-        """    // Orbit Browser: its own version, and the Firefox it is built on below
-    // it, where a distribution's name would go.
-    let version = Services.prefs.getStringPref(
-      "orbitbrowser.version",
-      AppConstants.MOZ_APP_VERSION_DISPLAY
-    );
-    let distribution = `Built on Firefox ${AppConstants.MOZ_APP_VERSION_DISPLAY}`;
-""",
-        "Settings' update section shows Orbit Browser's version and the Firefox under it.",
-    ),
-    # -- the add-ons page: Mozilla, not the browser, runs the recommended extensions ---------
-    Patch("gre", "localization/en-US/toolkit/about/aboutAddons.ftl",
-          '    a selection Firefox <a data-l10n-name="learn-more-trigger">recommends</a> for\n',
-          '    a selection Mozilla <a data-l10n-name="learn-more-trigger">recommends</a> for\n',
-          "Mozilla's Recommended Extensions program, named for who runs it."),
-    Patch("gre", "localization/en-US/toolkit/about/aboutAddons.ftl",
-          "  .title = Firefox only recommends extensions that meet standards for security and performance\n",
-          "  .title = Mozilla only recommends extensions that meet standards for security and performance\n",
-          "The same program's badge."),
-    # -- Mozilla's account, feedback and device moving: gone from the menus ---------------
-    # The feedback policy only greys these out, and the Help menu shows them
-    # again every time it opens; the app menu's Help view copies what's shown.
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/utilityOverlay.js",
-        """  document.getElementById("feedbackPage").disabled =
-    !Services.policies.isAllowed("feedbackCommands");
-""",
-        """  document.getElementById("feedbackPage").disabled =
-    !Services.policies.isAllowed("feedbackCommands");
-  // Orbit Browser: no feedback to Mozilla while the policy is off, and no
-  // moving a Mozilla account to a new device.
-  document.getElementById("feedbackPage").hidden =
-    !Services.policies.isAllowed("feedbackCommands");
-  document.getElementById("helpSwitchDevice").hidden = true;
-""",
-        "Hides Share Ideas and Feedback, and Switching to a New Device, in the Help menu and the app menu.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/browser-safebrowsing.js",
-        "    reportMenu.hidden = isPhishingPage;\n",
-        '    reportMenu.hidden =\n      isPhishingPage || !Services.policies.isAllowed("feedbackCommands");\n',
-        "Report Deceptive Site goes with the other feedback commands rather than staying greyed out.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/browser-safebrowsing.js",
-        "    reportErrorMenu.hidden = !isPhishingPage;\n",
-        '    reportErrorMenu.hidden =\n      !isPhishingPage || !Services.policies.isAllowed("feedbackCommands");\n',
-        "And its This Isn't a Deceptive Site.",
-    ),
-    # The Mac's menu bar when no window is open has no script to hide these.
-    *[
-        Patch("browser", "chrome/browser/content/browser/hiddenWindowMac.xhtml",
-              f'      <menuitem id="{item}"\n', f'      <menuitem id="{item}" hidden="true"\n',
-              f"{item}, hidden in the Mac's windowless menu bar.", platforms=("mac",))
-        for item in ("menu_newAIWindow", "menu_newClassicWindow", "feedbackPage", "helpSwitchDevice", "help_reportBrokenSite")
-    ],
-    # Report Broken Site (to Mozilla) is hidden when the feedback policy is off,
-    # but only once a tab changes; until then the menu's own markup shows it.
-    Patch("browser", "chrome/browser/content/browser/browser.xhtml",
-          '      <menuitem id="help_reportBrokenSite"\n', '      <menuitem id="help_reportBrokenSite" hidden="true"\n',
-          "Report Broken Site starts hidden; Firefox shows it again only if feedback is allowed."),
-    # -- the sidebar: no Synced Tabs, which needs a Mozilla account ---------------------------
-    # Left out of the sidebar's tools altogether while accounts are off (they are
-    # locked off), so neither the launcher, its Customize panel nor the View
-    # menu offers it, whatever a profile's saved list of tools says.
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/sidebar/browser-sidebar.js",
-        """      [
-        "viewTabsSidebar",
-        this.makeSidebar({
-""",
-        """      // Orbit Browser: Synced Tabs only with a Mozilla account.
-      ...(Services.prefs.getBoolPref("identity.fxaccounts.enabled", true) ? [[
-        "viewTabsSidebar",
-        this.makeSidebar({
-""",
-        "Synced Tabs is registered only when Mozilla accounts are on.",
-    ),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/sidebar/browser-sidebar.js",
-        """          gleanClickEvent: Glean.sidebar.syncedTabsIconClick,
-        }),
-      ],
-""",
-        """          gleanClickEvent: Glean.sidebar.syncedTabsIconClick,
-        }),
-      ]] : []),
-""",
-        "The end of that entry.",
-    ),
-    # -- Settings: the landing page without Mozilla's account ------------------------------
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/preferences/preferences.js",
-        """  sync: {
-    l10nId: "account-sync-section",
-    iconSrc: "chrome://browser/skin/fxa/avatar-empty.svg",
-    groupIds: [
-      "defaultBrowserSync",
-      "accountDisabled",
-      "account",
-      "sync",
-      "importBrowserData",
-      "profiles",
-      "backup",
-      "referrals",
-    ],""",
-        """  sync: {
-    l10nId: "account-sync-section",
-    // Orbit Browser: the page keeps the default browser, importing, profiles
-    // and backup; Mozilla's account, Sync and "Share Firefox" go.
-    iconSrc: "chrome://global/skin/icons/settings.svg",
-    groupIds: ["defaultBrowserSync", "importBrowserData", "profiles", "backup"],""",
-        "Settings' first page without Mozilla's account, Sync and referral groups.",
-    ),
-    Patch("browser", "localization/en-US/browser/preferences/preferences.ftl",
-          "account-sync-section =\n    .heading = Account and sync\n",
-          "account-sync-section =\n    .heading = General\n",
-          "Its heading."),
-    Patch("browser", "localization/en-US/browser/preferences/preferences.ftl",
-          "pane-account-sync-title2 = Account and sync\n    .title = Account and sync\n",
-          "pane-account-sync-title2 = General\n    .title = General\n",
-          "Its name in Settings' list."),
-    Patch(
-        "browser",
-        "chrome/browser/content/browser/preferences/preferences.js",
-        """    groupIds: ["passwords", "payments", "addresses", "personalInfo"],
-    module:
-      "chrome://browser/content/preferences/config/passwords-autofill.mjs",
-    visible: () => srdSectionEnabled("passwordsAutofill"),""",
-        """    groupIds: ["passwords", "payments", "addresses", "personalInfo"],
-    module:
-      "chrome://browser/content/preferences/config/passwords-autofill.mjs",
-    // Orbit Browser: Firefox's passwords, cards and addresses are off and
-    // locked (distribution/policies.json); Orbit Pass fills instead.
-    visible: () => false,""",
-        "Settings has no Passwords and autofill page: everything on it is Firefox's own autofill, which is off.",
-    ),
-    # -- the new tab's wallpapers: Orbit's, not the Firefox ones --------------------------------
-    # The category Firefox keeps for its own wallpapers (foxes, and promotions
-    # such as World Cup teams) is named after the browser, so it said "Orbit
-    # Browser" over pictures of foxes. branding/firefox-branding.js keeps the
-    # built-in new tab, which these patches change, from being swapped for
-    # Mozilla's newer copy.
-    Patch(
-        "browser",
-        "chrome/browser/builtin-addons/newtab/lib/Wallpapers/WallpaperFeed.sys.mjs",
-        """    const wallpapers = [
-      ...records.map(record => {
-""",
-        ORBIT_WALLPAPER_FEED,
+    Generated(
+        "browser", "chrome/browser/builtin-addons/newtab/lib/Wallpapers/WallpaperFeed.sys.mjs",
+        "    const wallpapers = [\n      ...records.map(record => {\n", ORBIT_WALLPAPER_FEED,
         "The new tab offers Orbit's wallpapers (branding/content/wallpapers/) in place of the Firefox ones.",
     ),
-    Patch("browser", "localization/en-US/browser/newtab/newtab.ftl",
-          "newtab-wallpaper-category-title-firefox = { -brand-product-name }\n",
-          ORBIT_WALLPAPER_NAMES,
-          "What a screen reader says for each of Orbit's wallpapers."),
-    # -- Firefox product names in the toolkit's brand terms ------------------------------------
-    Patch("gre", "localization/en-US/toolkit/branding/brandings.ftl",
-          "-firefox-home-brand-name = Firefox Home\n",
-          "-firefox-home-brand-name = Orbit Browser Home\n",
-          "The home page's name."),
-    Patch("gre", "localization/en-US/toolkit/branding/brandings.ftl",
-          "-firefoxview-brand-name = Firefox View\n",
-          "-firefoxview-brand-name = Tab Overview\n",
-          "Firefox View, under a name that isn't Firefox's."),
-    Patch("gre", "localization/en-US/toolkit/branding/brandings.ftl",
-          "-firefox-suggest-brand-name = Firefox Suggest\n",
-          "-firefox-suggest-brand-name = Address Bar Suggestions\n",
-          "Firefox Suggest, under a name that isn't Firefox's."),
-    # -- the startup profile selector: open the chosen profile through the bundle ---------------
-    # Mac only. Choosing a profile in the selector shown at start-up normally
-    # returns launchWithProfile to Firefox's native start-up code, which
-    # relaunches the engine (Contents/MacOS/firefox) directly. That path skips
-    # the launcher (Contents/MacOS/orbit-browser), the only thing that sets
-    # XUL_APP_FILE and so makes the engine Orbit Browser rather than Firefox; the
-    # relaunched instance looks for its data in ~/Library/Application Support/
-    # Firefox (which macOS guards for Firefox alone), finds no profile and quits
-    # before a window opens -- "the app closes after opening a profile", and only
-    # from the start-up selector (the in-browser profiles panel already launches
-    # through the bundle and works). So launch the chosen profile the panel's way
-    # (launchInstance -> launchAppBundle -> the launcher runs and sets
-    # XUL_APP_FILE), then tell the start-up code to just exit this selector
-    # process. Windows runs firefox.exe directly with no launcher, so its native
-    # relaunch is already Orbit Browser; this patch is the Mac's alone.
-    Patch("browser", "chrome/browser/content/browser/profiles/profile-selector.mjs",
-          """  async launchProfile(profile, url) {
-    if (this.isStartupUI) {
-      await this.setLaunchArguments(profile, url ? ["-url", url] : []);
-      await this.selectableProfileService.uninit();
-    } else {
-      this.selectableProfileService.launchInstance(profile, url ? [url] : []);
-    }
-
-    window.close();
-  }""",
-          """  async launchProfile(profile, url) {
-    // Orbit Browser: launch through the app bundle (so the launcher runs and
-    // sets XUL_APP_FILE) instead of the native launchWithProfile relaunch,
-    // which runs the engine directly and loses Orbit Browser's data folder.
-    this.selectableProfileService.launchInstance(profile, url ? [url] : []);
-    if (this.isStartupUI) {
-      if (this.#startupParams) {
-        this.#startupParams.SetInt(0, Ci.nsIToolkitProfileService.exit);
-        this.#startupParams.SetInt(1, 0);
-        this.#startupParams.SetInt(2, 0);
-      }
-      await this.selectableProfileService.uninit();
-    }
-
-    window.close();
-  }""",
-          "The start-up profile selector opens the chosen profile through the app bundle.",
-          platforms=("mac",)),
+    Generated(
+        "browser", "localization/en-US/browser/newtab/newtab.ftl",
+        "newtab-wallpaper-category-title-firefox = { -brand-product-name }\n", ORBIT_WALLPAPER_NAMES,
+        "What a screen reader says for each of Orbit's wallpapers.",
+    ),
 ]
+
+
+def apply_generated(generated: Generated, text: str) -> str:
+    count = text.count(generated.old)
+    if count != 1:
+        where = "is not in" if count == 0 else f"appears {count} times in"
+        raise PatchError(
+            f"Generated edit for {generated.jar}:{generated.path} no longer applies: its anchor {where} this Firefox.\n"
+            f"  Change: {generated.why}\n  Looking for: {generated.old[:160]!r}"
+        )
+    return text.replace(generated.old, generated.new)
+
+
+# -- the appends ------------------------------------------------------------------------
 
 #: Styles added at the end of Mozilla's own stylesheets (they win over what
 #: comes before them), by (jar, path).
@@ -564,16 +277,30 @@ COMPONENT_CATEGORIES = (
 )
 
 
-class PatchError(Exception):
-    pass
+# -- applying everything to the two jars ------------------------------------------------
 
 
-def apply(patch: Patch, text: str) -> str:
-    count = text.count(patch.old)
-    if count != 1:
-        where = "is not in" if count == 0 else f"appears {count} times in"
-        raise PatchError(
-            f"Patch for {patch.jar}:{patch.path} no longer applies: its text {where} this Firefox.\n"
-            f"  Patch: {patch.why}\n  Looking for: {patch.old[:160]!r}"
-        )
-    return text.replace(patch.old, patch.new)
+def apply_all(jars: dict, platform: str) -> None:
+    """Change the two omni.ja jars (a {"browser": Jar, "gre": Jar} mapping) in
+    place: the .patch files, then the generated edits, then the appends. Each
+    step raises PatchError, naming what no longer fits, before a build ships
+    without it."""
+    for patch in load_patches():
+        if platform not in patch.platforms:
+            continue
+        jar = jars[patch.jar]
+        jar.replace(patch.path, git_apply(patch, jar.text(patch.path)))
+
+    for generated in GENERATED:
+        jar = jars[generated.jar]
+        jar.replace(generated.path, apply_generated(generated, jar.text(generated.path)))
+
+    for (jar_name, path), css in APPENDED_STYLES.items():
+        jar = jars[jar_name]
+        jar.replace(path, jar.text(path) + css)
+
+    browser = jars["browser"]
+    browser.replace(
+        "components/components.manifest",
+        browser.text("components/components.manifest") + COMPONENT_CATEGORIES,
+    )
