@@ -389,9 +389,9 @@ tests/                    the build tests, the smoke test and its Marionette cli
 ## The logo
 
 `scripts/orbitmark.swift` is the Orbit family's mark renderer, the same file in Orbit AI, Chat, IDE,
-Mail, Mission Control, Pass and the Website. Orbit Browser's mark is a globe drawn in line, its rim,
-one meridian and a latitude ring, with the family's tilted orbit and moon for its equator, white on
-violet and magenta (`#b07cff` → `#e0379a`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
+Mail, Mission Control, Pass and the Website. Orbit Browser's mark is a globe drawn in line, its rim
+and one meridian, with the family's tilted orbit and moon for its equator, white on violet and
+magenta (`#b07cff` → `#e0379a`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
 own mark. At 16 px, where the family drops the orbit, the globe draws an equator of its own.
 `scripts/build_icon.py` renders the Mac icon, the Windows icons and tiles, the browser's own logo
 pages and the toolbar's mark from it, and Orbit AI's mark for the sidebar. The wordmark is "Orbit
