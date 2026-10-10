@@ -6,7 +6,7 @@ builds and makes them Orbit's:
 
 | | What Orbit Browser does | Where |
 | --- | --- | --- |
-| **Name and logo** | "Orbit Browser" everywhere Firefox names itself; the Orbit family's mark, a globe with an orbit for its equator, on orange | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
+| **Name and logo** | "Orbit Browser" everywhere Firefox names itself; the Orbit family's mark, a globe with an orbit for its equator, on violet and magenta | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
 | **Colours** | Orbit's in the window instead of Firefox's violet and orange: a night-sky slate, Orbit teal and indigo | `browser/content/orbit-browser.css` |
 | **Wallpapers** | The new tab's Firefox wallpapers (foxes, promotions) replaced by Orbit's own: space in Orbit teal | `scripts/wallpapers.swift`, `branding/content/wallpapers/`, `scripts/omni_patches.py` |
 | **Mozilla's AI** | Every AI feature off and locked, the settings page for them gone, the on-device AI libraries not shipped | `distribution/policies.json`, `scripts/build.py` |
@@ -389,9 +389,9 @@ tests/                    the build tests, the smoke test and its Marionette cli
 ## The logo
 
 `scripts/orbitmark.swift` is the Orbit family's mark renderer, the same file in Orbit AI, Chat, IDE,
-Mail, Mission Control, Pass and the Website. Orbit Browser's mark is a globe drawn in line, its rim
-and one meridian, with the family's tilted orbit and moon for its equator, white on orange (`#ffb547`
-→ `#f2621a`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
+Mail, Mission Control, Pass and the Website. Orbit Browser's mark is a globe drawn in line, its rim,
+one meridian and a latitude ring, with the family's tilted orbit and moon for its equator, white on
+violet and magenta (`#b07cff` → `#e0379a`). It is the family's only open globe, so it doesn't read as the solid planet of Orbit's
 own mark. At 16 px, where the family drops the orbit, the globe draws an equator of its own.
 `scripts/build_icon.py` renders the Mac icon, the Windows icons and tiles, the browser's own logo
 pages and the toolbar's mark from it, and Orbit AI's mark for the sidebar. The wordmark is "Orbit
