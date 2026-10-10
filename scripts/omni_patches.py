@@ -156,7 +156,10 @@ def load_patches() -> list[StaticPatch]:
         jar = rel.parts[0]
         if jar not in ("browser", "gre"):
             raise PatchError(f"{file}: must be under patches/browser/ or patches/gre/.")
-        platforms = ("mac", "windows")
+        # omni.ja is the same content on every desktop platform, so a patch with
+        # no "# platforms:" line applies to all of them, Linux included. A patch
+        # that touches platform-specific behaviour narrows itself with that line.
+        platforms = ("mac", "windows", "linux")
         why = []
         lines = file.read_text().splitlines(keepends=True)
         start = next((i for i, line in enumerate(lines) if line.startswith("--- ")), None)

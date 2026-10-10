@@ -13,6 +13,14 @@
     "win64-aarch64": {
       "path": "win64-aarch64/en-US/Firefox Setup 157.0.1.exe",
       "sha512": "5121064541871ab18682145b189257b06dce70efa0361111a0785aefeac4f8debf9db6003ac95319bdd17d153bf605a2b1f8d40039e16c255a0f8b8dcb70d0a0"
+    },
+    "linux": {
+      "path": "linux-x86_64/en-US/firefox-157.0.1.tar.xz",
+      "sha512": "ebec5e5c91a7c954a0f276928748bb4249e2b44bccdcfe6c7d7b4ed9c64ca6891a56cc8a016546bfbf1ca537dfe6084dba8f2746037c62fae0acc13a542421f3"
+    },
+    "linux-aarch64": {
+      "path": "linux-aarch64/en-US/firefox-157.0.1.tar.xz",
+      "sha512": "8d8cea53ceea62b1f11d4d4345190a31611e90a7a3b921f096da6515bdb0ad60e5a311a06a193b67fc993c18debf78aa67aa314de685da9c66bb9b4d0640d422"
     }
   }
 }

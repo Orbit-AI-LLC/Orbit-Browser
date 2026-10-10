@@ -1,7 +1,8 @@
 """Build Orbit Browser from Mozilla's Firefox release.
 
-    python3 scripts/build.py                          # the Mac app (on a Mac) or Windows x64
+    python3 scripts/build.py                          # the host's default (Mac on a Mac, Linux on Linux, else Windows x64)
     python3 scripts/build.py --platform win64 --platform win64-aarch64
+    python3 scripts/build.py --platform linux --platform linux-aarch64
     python3 scripts/build.py --platform mac --sign "Developer ID Application: …"
 
 Downloads the release firefox.json pins (checking Mozilla's SHA-512), and
@@ -21,7 +22,8 @@ on main, 0.1.0-local here.
 
 Mac builds need macOS (hdiutil, codesign). Windows builds run anywhere with
 bsdtar (macOS's tar; libarchive-tools on Linux) and Node; the installer also
-needs makensis (NSIS).
+needs makensis (NSIS). Linux builds run anywhere with tar and Node, and make a
+.tar.xz per architecture (x86_64 and aarch64).
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 import zlib
@@ -51,8 +54,9 @@ CACHE = ROOT / ".cache"
 WORK = ROOT / "work"
 DIST = ROOT / "dist"
 BRANDING = ROOT / "branding"
-PLATFORMS = ("mac", "win64", "win64-aarch64")
+PLATFORMS = ("mac", "win64", "win64-aarch64", "linux", "linux-aarch64")
 WINDOWS_ARCH = {"win64": "x64", "win64-aarch64": "arm64"}
+LINUX_ARCH = {"linux": "x86_64", "linux-aarch64": "aarch64"}
 
 APP_NAME = "Orbit Browser"
 #: Orbit Browser's own version, as people see it and Orbit Mission Control
@@ -85,6 +89,7 @@ ORBIT_APPS = [
 AI_LIBRARIES = {
     "mac": ["Contents/MacOS/libmozinference.dylib", "Contents/MacOS/libonnxruntime.dylib"],
     "windows": ["mozinference.dll", "onnxruntime.dll"],
+    "linux": ["libmozinference.so", "libonnxruntime.so"],
 }
 
 #: Firefox's updater and what serves it. Left in, it would replace Orbit
@@ -100,6 +105,10 @@ UPDATER = {
         # Firefox's scheduled task that nags about the default browser.
         "default-browser-agent.exe",
     ],
+    # Removed best-effort on Linux (remove_present): a release tarball's layout
+    # varies more than the Mac and Windows ones, and OrbitUpdates replaces the
+    # updater either way.
+    "linux": ["updater", "update-settings.ini"],
 }
 
 #: Entitlements of Mozilla's main executable that Orbit Browser can't keep:
@@ -386,10 +395,11 @@ def orbit_default_bookmarks() -> str:
 
 def write_policies(distribution: Path, platform: str) -> None:
     policies = json.loads((ROOT / "distribution" / "policies.json").read_text())
-    if platform != "mac":
+    if platform.startswith("win"):
         # Firefox's own way of becoming the default browser on Windows
         # registers it under Firefox's name; the installer registers Orbit
-        # Browser, and Windows' Default apps settings choose it.
+        # Browser, and Windows' Default apps settings choose it. These keys are
+        # Windows-only, so Mac and Linux don't get them.
         policies["policies"].update({
             "DisableDefaultBrowserAgent": True,
             "DefaultBrowserSettingEnabled": False,
@@ -404,13 +414,31 @@ def remove_ai_libraries(base: Path, platform: str) -> None:
     has each: Windows on Arm has no ONNX Runtime), and then a check that
     nothing else by those names is left."""
     found = [name for name in AI_LIBRARIES[platform] if (base / name).exists()]
-    if not found:
+    if found:
+        remove(base, found)
+    elif platform == "linux":
+        # The Linux release may not ship the on-device AI libraries at all;
+        # that is fine, there is nothing to remove. The sweep below still runs,
+        # so one that appears under a new name is still caught.
+        log("No on-device AI libraries in this Linux build; nothing to remove.")
+    else:
         raise SystemExit("None of Firefox's AI libraries are where they were; have they moved? (scripts/build.py)")
-    remove(base, found)
     folder = (base / AI_LIBRARIES[platform][0]).parent
     left = [p.name for p in folder.iterdir() if re.search(r"inference|onnx", p.name, re.I)]
     if left:
         raise SystemExit(f"Firefox has AI libraries the build doesn't know: {left} (scripts/build.py, AI_LIBRARIES)")
+
+
+def remove_present(base: Path, relative: list[str]) -> None:
+    """Remove each path that is there, and quietly skip one that is not. For the
+    Linux build, whose release tarball's exact file set varies more than the Mac
+    and Windows builds'."""
+    for name in relative:
+        target = base / name
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
 
 
 def remove(base: Path, relative: list[str]) -> None:
@@ -684,6 +712,134 @@ def build_windows(args, platform: str, version: str, orbit_pass: dict[str, bytes
     return outputs
 
 
+# -- Linux --------------------------------------------------------------------------------
+
+
+def build_linux(args, platform: str, version: str, orbit_pass: dict[str, bytes]) -> list[Path]:
+    tarball = fetch_firefox(platform)
+    arch = LINUX_ARCH[platform]
+    work = args.work / platform
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    log(f"Unpacking Firefox for Linux ({arch})")
+    # Mozilla's tarball unpacks to a top-level "firefox/" directory (the same
+    # omni.ja / browser/omni.ja layout as the Windows "core"). The checksum is
+    # Mozilla's own, so this is a trusted archive.
+    run("tar", "-xf", tarball, "-C", work)
+    extracted = work / "firefox"
+    if not extracted.is_dir():
+        raise SystemExit(f"{tarball.name} did not unpack to a 'firefox' directory; has Mozilla changed its layout?")
+    app = work / "orbit-browser"
+    extracted.rename(app)
+
+    log("Rebranding and changing omni.ja")
+    stamp = customize_omni(app, platform="linux", version=version, build=args.build, orbit_pass=orbit_pass)
+    write_policies(app / "distribution", platform)
+    remove_ai_libraries(app, "linux")
+    # Firefox's updater would replace Orbit Browser with Mozilla's Firefox;
+    # OrbitUpdates installs new Orbit Browsers instead (as on Mac and Windows).
+    remove_present(app, UPDATER["linux"])
+    brand_linux(app)
+
+    DIST.mkdir(exist_ok=True)
+    out = DIST / f"Orbit-Browser-{version}-Linux-{arch}.tar.xz"
+    if out.exists():
+        out.unlink()
+    log("Packaging the tarball")
+    # tarfile (w:xz) rather than the tar CLI: it is the same on macOS and Linux,
+    # keeps the executable bits Firefox needs, and the filter drops the building
+    # account's uid/gid so the archive is reproducible.
+    with tarfile.open(out, "w:xz") as archive:
+        archive.add(app, arcname=app.name, filter=_reproducible_tarinfo)
+    print(f"stamp {stamp}")
+    return [out]
+
+
+def _reproducible_tarinfo(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    info.mtime = 1767225600  # 2026-01-01, as the omni.ja entries use.
+    return info
+
+
+def brand_linux(app: Path) -> None:
+    """Orbit Browser's name, icon and profile on the unpacked Linux tree: the
+    engine's application data, the window-manager icons, and a desktop entry a
+    packager can install."""
+    ini = app / "application.ini"
+    ini.write_text(orbit_linux_application_ini(ini.read_text()))
+
+    # The window and launcher icon the desktop shows: Mozilla's defaults
+    # replaced with Orbit's mark at the sizes Firefox ships.
+    icons = app / "browser" / "chrome" / "icons" / "default"
+    replaced = 0
+    for size in (16, 32, 48, 64, 128):
+        source = BRANDING / "content" / f"icon{size}.png"
+        target = icons / f"default{size}.png"
+        if source.exists() and target.exists():
+            shutil.copyfile(source, target)
+            replaced += 1
+    if not replaced:
+        log("No Linux default icons were replaced; have they moved? (scripts/build.py)")
+
+    # A .desktop entry and its icon, for a packager or an install script. The
+    # StartupWMClass matches the RemotingName so the running window takes this
+    # icon rather than a generic one.
+    (app / f"{LINUX_REMOTING_NAME}.desktop").write_text(linux_desktop_entry())
+    icon128 = BRANDING / "content" / "icon128.png"
+    if icon128.exists():
+        shutil.copyfile(icon128, app / f"{LINUX_REMOTING_NAME}.png")
+
+
+#: The WM_CLASS / remoting name and profile directory (~/.orbit-browser), so
+#: Orbit Browser's window, desktop entry and profile are its own, apart from a
+#: Firefox installed beside it.
+LINUX_REMOTING_NAME = "orbit-browser"
+
+
+def orbit_linux_application_ini(firefox_ini: str) -> str:
+    """The engine's application data, from Firefox's, with Orbit Browser's
+    remoting name and profile folder (~/.orbit-browser), the crash reporter off,
+    and Name left "Firefox" (the user agent and add-ons go by it)."""
+    import configparser
+
+    ini = configparser.ConfigParser(interpolation=None)
+    ini.optionxform = str
+    ini.read_string(firefox_ini)
+    app = dict(ini["App"])
+    app["RemotingName"] = LINUX_REMOTING_NAME
+    app["Profile"] = LINUX_REMOTING_NAME
+    out = ["; Orbit Browser's application data, written by scripts/build.py from Firefox's.", "[App]"]
+    out += [f"{key}={value}" for key, value in app.items()]
+    for section in ("Gecko", "XRE"):
+        if ini.has_section(section):
+            out += ["", f"[{section}]"] + [f"{key}={value}" for key, value in ini[section].items()]
+    out += ["", "[Crash Reporter]", "Enabled=0", ""]
+    return "\n".join(out)
+
+
+def linux_desktop_entry() -> str:
+    """A freedesktop .desktop entry for Orbit Browser, shipped in the tarball for
+    a packager or install script to place. Exec is the engine's own launcher."""
+    return "\n".join([
+        "[Desktop Entry]",
+        "Version=1.0",
+        "Type=Application",
+        f"Name={APP_NAME}",
+        "GenericName=Web Browser",
+        "Comment=Browse the web with Orbit Browser",
+        "Exec=firefox %u",
+        f"Icon={LINUX_REMOTING_NAME}",
+        "Terminal=false",
+        "Categories=Network;WebBrowser;",
+        f"StartupWMClass={LINUX_REMOTING_NAME}",
+        "StartupNotify=true",
+        "MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;",
+        "",
+    ])
+
+
 def bsdtar() -> str:
     for name in ("bsdtar", "tar"):
         path = shutil.which(name)
@@ -697,7 +853,7 @@ def bsdtar() -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--platform", action="append", choices=PLATFORMS, help="mac, win64 or win64-aarch64 (repeatable)")
+    parser.add_argument("--platform", action="append", choices=PLATFORMS, help="mac, win64, win64-aarch64, linux or linux-aarch64 (repeatable)")
     parser.add_argument("--orbit-pass", type=Path, default=ROOT.parent / "Orbit Pass", help="the Orbit Pass checkout")
     parser.add_argument("--build", type=int, default=0, help="the build number (CI's run number)")
     parser.add_argument("--release", action="store_true", help="a release: the version without -build.N")
@@ -705,7 +861,14 @@ def main(argv=None) -> int:
     parser.add_argument("--work", type=Path, default=WORK, help="where the unpacked builds go (default work/)")
     args = parser.parse_args(argv)
     args.work = args.work.resolve()
-    platforms = args.platform or (["mac"] if sys.platform == "darwin" else ["win64"])
+    if args.platform:
+        platforms = args.platform
+    elif sys.platform == "darwin":
+        platforms = ["mac"]
+    elif sys.platform.startswith("linux"):
+        platforms = ["linux"]
+    else:
+        platforms = ["win64"]
 
     firefox = firefox_pin()["version"]
     version = orbit_version(args.build, args.release)
@@ -717,6 +880,8 @@ def main(argv=None) -> int:
             if sys.platform != "darwin":
                 raise SystemExit("The Mac app is built on macOS.")
             outputs += build_mac(args, version, orbit_pass)
+        elif platform.startswith("linux"):
+            outputs += build_linux(args, platform, version, orbit_pass)
         else:
             outputs += build_windows(args, platform, version, orbit_pass)
     for out in outputs:

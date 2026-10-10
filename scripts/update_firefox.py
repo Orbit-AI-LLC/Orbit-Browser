@@ -36,11 +36,15 @@ ARCHIVE = "https://archive.mozilla.org/pub/firefox/releases"
 
 #: The builds Orbit Browser repacks, by platform: the path under the release
 #: folder, with {v} for the version. Mac builds are universal (Apple silicon
-#: and Intel); Windows has one per architecture.
+#: and Intel); Windows and Linux have one per architecture. Mozilla names the
+#: Linux tarballs in lower case with a hyphen (firefox-{v}.tar.xz), unlike the
+#: Mac and Windows filenames.
 BUILDS = {
     "mac": "mac/en-US/Firefox {v}.dmg",
     "win64": "win64/en-US/Firefox Setup {v}.exe",
     "win64-aarch64": "win64-aarch64/en-US/Firefox Setup {v}.exe",
+    "linux": "linux-x86_64/en-US/firefox-{v}.tar.xz",
+    "linux-aarch64": "linux-aarch64/en-US/firefox-{v}.tar.xz",
 }
 
 

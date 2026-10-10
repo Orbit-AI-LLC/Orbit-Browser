@@ -1,6 +1,6 @@
 # Orbit Browser
 
-Orbit's web browser for the Mac and Windows. Its engine is Mozilla's Firefox, the newest release
+Orbit's web browser for the Mac, Windows and Linux. Its engine is Mozilla's Firefox, the newest release
 (pinned in `firefox.json`, now **157.0.1**). Orbit Browser takes Mozilla's own signed release
 builds and makes them Orbit's:
 
@@ -30,8 +30,9 @@ optimised, tested builds, and moves to a new Firefox in minutes; a compiled fork
 and hours per platform, and would have to rebuild every Firefox security release.
 
 ```bash
-python3 scripts/build.py                                   # the Mac app (on a Mac)
+python3 scripts/build.py                                   # the host's default: Mac on a Mac, Linux on Linux, else Windows x64
 python3 scripts/build.py --platform win64 --platform win64-aarch64
+python3 scripts/build.py --platform linux --platform linux-aarch64
 python3 -m unittest discover -s tests                      # every change still applies to the pinned Firefox
 python3 tests/smoke.py --shots work/smoke                  # start the Mac app and check it from inside
 ```
@@ -40,6 +41,7 @@ python3 tests/smoke.py --shots work/smoke                  # start the Mac app a
 | --- | --- | --- | --- |
 | `mac` | macOS | Python 3, Node, git (applies the patches), clang (Xcode's command line tools) | `Orbit-Browser-<version>-macOS.dmg`, one app for Apple silicon and Intel |
 | `win64`, `win64-aarch64` | macOS or Linux | Python 3, Node (`npm ci` once), git (applies the patches), bsdtar (`libarchive-tools` on Linux), makensis (`nsis`) for the installer | `…-Windows-x64-Setup.exe` / `…-arm64-Setup.exe`, and a portable `.zip` of each |
+| `linux`, `linux-aarch64` | macOS or Linux | Python 3, Node (`npm ci` once), git (applies the patches), tar | `…-Linux-x86_64.tar.xz` / `…-Linux-aarch64.tar.xz` (the rebranded tree, with a `.desktop` entry inside) |
 
 Orbit Pass comes from the Orbit Pass checkout beside this one (`../Orbit Pass`, or
 `--orbit-pass <path>`): the build runs its `extension/scripts/package.mjs --firefox`. Downloads
@@ -433,6 +435,26 @@ tests/                    the build tests, the smoke test and its Marionette cli
                           signature check under Node and its fixtures
 .github/                  the build and release workflow, the update manifest script (shared)
 ```
+
+## The Linux app
+
+- **A rebranded tarball, like Mozilla's.** The Linux build (`build_linux`) unpacks Mozilla's
+  `linux-x86_64` / `linux-aarch64` release tarball (same `omni.ja` layout as Windows), rebrands it
+  the same way (`customize_omni`, the patches, the policies), and repackages the tree as
+  `Orbit-Browser-<version>-Linux-<arch>.tar.xz`. There is no installer and no code signing:
+  Linux desktops run the extracted tree directly.
+- **Its own data folder.** `application.ini` is rewritten with `RemotingName=orbit-browser` and
+  `Profile=orbit-browser`, so the engine keeps its data in `~/.orbit-browser`, apart from a Firefox
+  installed beside it, with `Name=Firefox` still (the user agent and add-ons go by it) and crash
+  reports off. The binary stays `firefox`.
+- **Its icon and desktop entry.** Mozilla's `browser/chrome/icons/default/default*.png` are replaced
+  with Orbit's mark at the sizes Firefox ships, and the tarball carries an `orbit-browser.desktop`
+  and `orbit-browser.png` a packager or install script can place. The entry's `StartupWMClass`
+  matches the remoting name, so the running window takes Orbit's icon.
+- **No updater.** Firefox's `updater` is removed (best effort, `remove_present`), as on Mac and
+  Windows; `OrbitUpdates` installs new Orbit Browsers from Orbit Mission Control instead.
+- **AI libraries.** Removed if the Linux release ships them (`remove_ai_libraries` is lenient on
+  Linux, since the release may not include them); the sweep still catches one under a new name.
 
 ## The logo
 
