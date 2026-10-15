@@ -117,7 +117,7 @@ jobs:
           key: firefox-${{ hashFiles('firefox.json') }}
       # The browser's update-signature check uses Uint8Array.fromBase64, which
       # Firefox has and Node has from 25; the runner's own Node is older.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libarchive-tools python3-cryptography
@@ -139,7 +139,7 @@ jobs:
           repository: Orbit-AI-LLC/Orbit-Pass
           token: ${{ secrets.ORBIT_PASS_TOKEN }}
           path: orbit-pass
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - uses: actions/cache@v4
@@ -173,7 +173,7 @@ jobs:
           repository: Orbit-AI-LLC/Orbit-Pass
           token: ${{ secrets.ORBIT_PASS_TOKEN }}
           path: orbit-pass
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - uses: actions/cache@v4
