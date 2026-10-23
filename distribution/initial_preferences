@@ -33,5 +33,11 @@
   },
   "spellcheck": {
     "use_spelling_service": false
+  },
+  "profile": {
+    "_comment_cookies": "ungoogled-chromium defaults site data to clear-on-exit (chrome://settings/content/siteData -> 'Delete data sites have saved ... when you close all windows'), which is the cookies content setting SESSION_ONLY (4). Orbit sets it back to Allow (1) so sites keep their data; a person can still change it.",
+    "default_content_setting_values": {
+      "cookies": 1
+    }
   }
 }

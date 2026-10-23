@@ -1,13 +1,13 @@
 """Orbit Browser's own data, in one place.
 
-The Chromium fork's build (scripts/build.py), its generated config
-(distribution/, the GN branding) and its Orbit source component
-(chromium_src/orbit/) all read these: Orbit Browser's version, the Orbit apps,
-the Orbit account, Orbit's update feed and Orbit Pass's identity. Nothing here
-is Chromium's; it is what makes a Chromium build Orbit Browser's.
+The repack's build (scripts/build.py), the enterprise policies and preferences
+(distribution/) and the force-installed Orbit extension all read these: Orbit
+Browser's version, the Orbit apps, the Orbit account, Orbit's update feed and
+Orbit Pass's identity. Nothing here is Chromium's; it is what makes a repacked
+ungoogled-chromium Orbit Browser's.
 
-`python3 scripts/orbit_config.py` prints it all as JSON (what the C++ in
-chromium_src/orbit/ is generated from, so Python and C++ never disagree).
+`python3 scripts/orbit_config.py` prints it all as JSON (what the Orbit extension
+and the generated config are built from, so they never disagree).
 """
 
 from __future__ import annotations
@@ -40,10 +40,9 @@ ORBIT_PASS_ID = "cabceppaohijjjeghpmbnojliinelphd"
 #: Where Orbit Mission Control serves the force-install update manifest for it.
 ORBIT_PASS_UPDATE_URL = "https://control.orbit.com.ai/extensions/orbit-pass/updates.xml"
 
-#: The Orbit apps: Orbit's managed bookmarks, the new tab's shortcuts, and the
-#: toolbar's Orbit menu (chromium_src/orbit/). id is the mark
-#: (branding/content/apps/<id>.svg); open, where the menu opens it if not the
-#: address (Orbit Pass: its vault page, inside the browser).
+#: The Orbit apps: Orbit's managed bookmarks and the force-installed Orbit
+#: extension's menu. id is the mark (branding/content/apps/<id>.svg); open, where
+#: the menu opens it if not the address (Orbit Pass: its vault page, in-browser).
 ORBIT_APPS = [
     {"id": "ai", "name": "Orbit AI", "url": "https://ai.orbit.com.ai/"},
     {"id": "mail", "name": "Orbit Mail", "url": "https://mail.orbit.com.ai/"},

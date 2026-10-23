@@ -1,65 +1,63 @@
-"""Build Orbit Browser from the Chromium source.
+"""Build Orbit Browser by repacking ungoogled-chromium.
 
-    python3 scripts/build.py                           # the host's default (Mac on a Mac, Linux on Linux, else Windows x64)
-    python3 scripts/build.py --platform win64 --platform win64-aarch64
-    python3 scripts/build.py --platform linux --platform linux-aarch64
-    python3 scripts/build.py --platform mac --sign "Developer ID Application: …"
-    python3 scripts/build.py --no-sync                 # reuse the source tree as it is (faster iteration)
+    python3 scripts/build.py                       # the host's default (Mac on a Mac, Linux on Linux, else Windows)
+    python3 scripts/build.py --platform win64
+    python3 scripts/build.py --platform mac-arm64 --platform mac-x64
+    python3 scripts/build.py --platform linux
 
-Orbit Browser is a *source fork* of Chromium: this compiles Chromium with
-Orbit's changes, rather than repacking a downloaded binary. The steps:
+Orbit Browser *repacks* a prebuilt Chromium rather than compiling it: it
+downloads the ungoogled-chromium build chromium.json pins (checking its
+SHA-256), unpacks it, and changes what can be changed without a compiler — the
+app's name and icon, the enterprise policies, the first-run preferences, and
+Orbit Pass built in. That keeps builds small and fast (minutes on a standard
+GitHub runner), the trade for a source fork's deeper reach.
 
-1. Fetch depot_tools and the Chromium source chromium.json pins (scripts/sync.py);
-2. Apply Orbit's branding (branding/), patches (patches/) and new files
-   (chromium_src/) onto a pristine tree (scripts/patches.py);
-3. `gn gen` with Orbit's GN arguments (build/args/) and `autoninja` the browser;
-4. Package per platform into dist/ (a .dmg + update payload on macOS, a
-   mini-installer + portable .zip on Windows, a .tar.xz on Linux).
+ungoogled-chromium already has Google's web services, sign-in and reporting
+removed; Orbit's policies (distribution/) lock the rest off and put Orbit's
+services in their place.
+
+What a repack cannot do (it would need the source): rename "Chromium" in the
+compiled UI strings, add the Orbit toolbar button / Orbit AI side panel as
+built-in UI (these ship as a force-installed Orbit extension instead), or embed
+an in-app self-updater. Orbit Browser's name and icon are set at the app-bundle
+level; its behaviour comes from policy and extensions.
 
 Orbit Browser has its own version (orbit_config.VERSION), apart from the
-Chromium it is built on (chromium.json): 0.1.0 for a release, 0.1.0-build.N for
-a build on main, 0.1.0-local here.
-
-The compile is large: tens of GB of source and hours per platform, the heavy
-path a source fork takes in exchange for being able to change anything (the
-engine, the UI, the services), not only what a repack can reach. Chromium's own
-updater is not built; Orbit Browser updates itself from Orbit Mission Control
-(chromium_src/orbit/update/), as every other Orbit app does.
+Chromium it is built on (chromium.json).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import orbit_config as cfg  # noqa: E402
-import patches  # noqa: E402
-import sync  # noqa: E402
+from net import download  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-BRANDING = ROOT / "branding"
+CACHE = ROOT / ".cache" / "chromium"
+WORK = ROOT / "work"
 DIST = ROOT / "dist"
-ARGS = ROOT / "build" / "args"
-PLATFORMS = ("mac", "win64", "win64-aarch64", "linux", "linux-aarch64")
-#: The out/ sub-directory per platform (one checkout, one output tree each).
-OUT_DIR = {p: f"Orbit-{p}" for p in PLATFORMS}
-#: How a platform names itself for Mission Control's update feed.
+BRANDING = ROOT / "branding"
+PLATFORMS = ("win64", "mac-x64", "mac-arm64", "linux")
+#: How a platform names itself for Mission Control's update feed (target, arch, os).
 UPDATE_TARGET = {
-    "mac": ("darwin", "universal", "mac"),
     "win64": ("windows", "x86_64", "windows"),
-    "win64-aarch64": ("windows", "aarch64", "windows"),
+    "mac-x64": ("darwin", "x86_64", "mac"),
+    "mac-arm64": ("darwin", "aarch64", "mac"),
     "linux": ("linux", "x86_64", "linux"),
-    "linux-aarch64": ("linux", "aarch64", "linux"),
 }
 
 
@@ -68,242 +66,211 @@ def log(message: str) -> None:
 
 
 def run(*args, **kwargs) -> subprocess.CompletedProcess:
-    kwargs.setdefault("env", sync.depot_tools_env())
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
-# -- Orbit's changes onto the tree --------------------------------------------------------
+def pin() -> dict:
+    return json.loads((ROOT / "chromium.json").read_text())
 
 
-def apply_branding(src: Path, version: str, build: int) -> None:
-    """Orbit's identity into the Chromium tree: the BRANDING file, the product
-    icons, and the generated defaults the Orbit component reads (version, apps,
-    update feed). Done before patches so a patch can refer to generated files."""
-    theme = src / "chrome" / "app" / "theme" / "chromium"
-    shutil.copyfile(BRANDING / "BRANDING", theme / "BRANDING")
-
-    # Product icons, over Chromium's: the app icon per platform and the PNG
-    # product logos the UI shows. branding/ holds Orbit's (scripts/build_icon.py).
-    for size in (16, 24, 32, 48, 64, 128, 256):
-        source = BRANDING / "content" / f"icon{size}.png"
-        if source.exists():
-            shutil.copyfile(source, theme / f"product_logo_{size}.png")
-    _copy_if(BRANDING / "mac" / "app.icns", theme / "app.icns")
-    _copy_if(BRANDING / "mac" / "document.icns", theme / "document.icns")
-    _copy_if(BRANDING / "windows" / "app.ico", src / "chrome" / "app" / "chrome_exe.ico")
-
-    # The generated header the Orbit component is built from, so the C++ and
-    # scripts/orbit_config.py never disagree. chromium_src/orbit/ #includes it.
-    generated = src / "chrome" / "browser" / "orbit" / "orbit_generated.h"
-    generated.parent.mkdir(parents=True, exist_ok=True)
-    generated.write_text(_orbit_header(version, build))
+# -- fetching ungoogled-chromium ----------------------------------------------------------
 
 
-def _orbit_header(version: str, build: int) -> str:
-    data = cfg.as_dict()
-    data["build"] = build
-    data["display_version"] = version
-    blob = json.dumps(data, indent=2).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n\"\n\"")
-    return (
-        "// Generated by scripts/build.py from scripts/orbit_config.py. Do not edit.\n"
-        "#ifndef CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n"
-        "#define CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n\n"
-        f'#define ORBIT_VERSION "{version}"\n'
-        f"#define ORBIT_BUILD {build}\n"
-        f'#define ORBIT_CONFIG_JSON "{blob}"\n\n'
-        "#endif  // CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n"
-    )
+def fetch_chromium(platform: str) -> Path:
+    info = pin()
+    build = info["builds"][platform]
+    if not info.get("version") or not build.get("url") or not build.get("sha256"):
+        raise SystemExit(
+            f"chromium.json has no pinned build for {platform}. "
+            "Run `python3 scripts/update_chromium.py` to pin the latest ungoogled-chromium and its checksums."
+        )
+    target = CACHE / info["version"] / Path(build["url"]).name
+    if not target.exists() or sha256(target) != build["sha256"]:
+        log(f"Downloading ungoogled-chromium {info['version']} ({platform})")
+        download(build["url"], target)
+    digest = sha256(target)
+    if digest != build["sha256"]:
+        target.unlink()
+        raise SystemExit(f"{target.name}: SHA-256 {digest} is not the one chromium.json pins. Download deleted.")
+    return target
 
 
-def _copy_if(source: Path, target: Path) -> None:
-    if source.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def platform_os(platform: str) -> str:
-    return "mac" if platform == "mac" else "win" if platform.startswith("win") else "linux"
+# -- shared staging -----------------------------------------------------------------------
 
 
-def stage_distribution(dest: Path) -> None:
-    """The first-run defaults into a packaged tree. The locked policy
-    (distribution/policies/) is placed by the installers at each platform's
-    managed-policy location (distribution/README.md), not inside the app."""
-    prefs = (ROOT / "distribution" / "initial_preferences").read_text()
-    (dest / "initial_preferences").write_text(prefs)
+def stage_initial_preferences(dest: Path) -> None:
+    """Chromium's first-run defaults, inside the app. The locked policy
+    (distribution/policies/) is placed by the installer at the OS managed-policy
+    location (distribution/README.md), which a repack cannot write from here."""
+    (dest / "initial_preferences").write_text((ROOT / "distribution" / "initial_preferences").read_text())
 
 
-def write_gn_args(src: Path, platform: str) -> Path:
-    out = src / "out" / OUT_DIR[platform]
-    out.mkdir(parents=True, exist_ok=True)
-    common = (ARGS / "common.gn").read_text()
-    per = (ARGS / f"{platform}.gn").read_text()
-    (out / "args.gn").write_text(common + "\n" + per)
-    log(f"gn gen out/{OUT_DIR[platform]}")
-    run("gn", "gen", f"out/{OUT_DIR[platform]}", cwd=src)
-    return out
+def stage_policy_file(package_dir: Path) -> None:
+    """Ship the locked policy in the package so the installer can place it. Kept
+    beside the app as orbit-policy.json; the installer copies it to the managed
+    location (Linux /etc/..., Windows registry, macOS managed prefs)."""
+    shutil.copyfile(ROOT / "distribution" / "policies" / "orbit.json", package_dir / "orbit-policy.json")
 
 
-def autoninja(src: Path, platform: str, targets: list[str], jobs: int | None) -> None:
-    args = ["autoninja", "-C", f"out/{OUT_DIR[platform]}"]
-    if jobs:
-        args += ["-j", str(jobs)]
-    log(f"autoninja {' '.join(targets)} ({platform})")
-    run(*args, *targets, cwd=src)
-
-
-# -- Orbit Pass (built in) ----------------------------------------------------------------
-
-
-def build_orbit_pass(checkout: Path, out: Path) -> dict:
-    """Orbit Pass's Chromium (MV3) package, made by its own packager, staged as
-    a pre-installed external extension. Returns {id, path, version}. Orbit Pass
-    is force-installed and un-removable by policy (distribution/)."""
+def build_orbit_pass(checkout: Path, dest: Path) -> None:
+    """Orbit Pass's Chromium (MV3) package, staged as a pre-installed extension.
+    It is also force-installed and un-removable by policy (distribution/)."""
     packager = checkout / "extension" / "scripts" / "package.mjs"
     if not packager.exists():
-        raise SystemExit(f"No Orbit Pass at {checkout} (expected extension/scripts/package.mjs). Pass --orbit-pass.")
-    out.mkdir(parents=True, exist_ok=True)
-    crx = out / "orbit-pass.crx"
-    run("node", str(packager), "--chrome", "--crx", str(crx), env=dict(os.environ))
-    # The packager prints the id it signed; trust orbit_config and verify.
-    return {"id": cfg.ORBIT_PASS_ID, "path": crx, "version": _crx_version(checkout)}
+        log(f"No Orbit Pass at {checkout}; skipping (force-installed by policy at runtime). Pass --orbit-pass to bundle it.")
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    run("node", str(packager), "--chrome", "--crx", str(dest / "orbit-pass.crx"))
 
 
-def _crx_version(checkout: Path) -> str:
-    manifest = json.loads((checkout / "extension" / "manifest.json").read_text())
-    return manifest.get("version", "0")
+# -- macOS --------------------------------------------------------------------------------
 
 
-# -- packaging ----------------------------------------------------------------------------
-
-
-def build_mac(args, version: str) -> list[Path]:
+def build_mac(args, platform: str, version: str) -> list[Path]:
     if sys.platform != "darwin":
-        raise SystemExit("The Mac app is built on macOS.")
-    src = args.src
-    out = write_gn_args(src, "mac")
-    autoninja(src, "mac", ["chrome", "chrome/installer/mac"], args.jobs)
-    app = out / f"{cfg.APP_NAME}.app"
-    built = out / "Chromium.app"
-    if not built.exists():
-        raise SystemExit(f"Build produced no {built}; check the autoninja output.")
-    if app.exists():
-        shutil.rmtree(app)
-    shutil.copytree(built, app, symlinks=True)
-    _mac_bundle_version(app, version)
-    stage_distribution(app / "Contents" / "Resources")
+        raise SystemExit("The Mac app is repacked on macOS (hdiutil).")
+    dmg = fetch_chromium(platform)
+    work = args.work / platform
+    reset_dir(work)
+    app = work / f"{cfg.APP_NAME}.app"
+    log("Unpacking ungoogled-chromium")
+    with tempfile.TemporaryDirectory() as mount:
+        run("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg, stdout=subprocess.DEVNULL)
+        try:
+            src_app = next(Path(mount).glob("*.app"))
+            run("ditto", src_app, app)
+        finally:
+            run("hdiutil", "detach", mount, "-quiet")
+
+    log("Rebranding")
+    rename_mac_bundle(app / "Contents", version)
+    resources = app / "Contents" / "Resources"
+    for icon in ("app.icns", "document.icns"):
+        source = BRANDING / "mac" / icon
+        if source.exists():
+            for existing in resources.glob("*.icns"):
+                if existing.name == icon or "app" in existing.name.lower() or "chromium" in existing.name.lower():
+                    shutil.copyfile(source, existing)
+    stage_initial_preferences(resources)
+    if args.orbit_pass:
+        build_orbit_pass(args.orbit_pass.resolve(), work / "extensions")
+
     if args.sign:
         log("Signing")
-        run("codesign", "--force", "--deep", "--timestamp", "--options", "runtime",
-            "--sign", args.sign, app, env=dict(os.environ))
-        run("codesign", "--verify", "--strict", "--deep", app, env=dict(os.environ))
+        run("codesign", "--force", "--deep", "--timestamp", "--options", "runtime", "--sign", args.sign, app)
+        run("codesign", "--verify", "--strict", "--deep", app)
 
     DIST.mkdir(exist_ok=True)
-    dmg = DIST / f"Orbit-Browser-{version}-macOS.dmg"
-    _mac_dmg(app, dmg, args.sign)
-    payload = DIST / f"Orbit-Browser-{version}-macOS.app.tar.gz"
-    run("tar", "--no-mac-metadata", "-czf", payload, "-C", out, app.name, env=dict(os.environ))
-    return [dmg, payload]
+    arch = "Intel" if platform == "mac-x64" else "AppleSilicon"
+    out = DIST / f"Orbit-Browser-{version}-macOS-{arch}.dmg"
+    make_dmg(app, out, args.sign)
+    payload = DIST / f"Orbit-Browser-{version}-macOS-{arch}.app.tar.gz"
+    run("tar", "--no-mac-metadata", "-czf", payload, "-C", work, app.name)
+    stage_policy_file(DIST)
+    return [out, payload]
 
 
-def _mac_bundle_version(app: Path, version: str) -> None:
-    info = app / "Contents" / "Info.plist"
-    plist = plistlib.loads(info.read_bytes())
-    plist["CFBundleShortVersionString"] = version
-    plist["CFBundleIdentifier"] = cfg.MAC_BUNDLE_ID
-    info.write_bytes(plistlib.dumps(plist))
+def rename_mac_bundle(contents: Path, version: str) -> None:
+    info_path = contents / "Info.plist"
+    info = plistlib.loads(info_path.read_bytes())
+    info.update({
+        "CFBundleName": cfg.APP_NAME,
+        "CFBundleDisplayName": cfg.APP_NAME,
+        "CFBundleIdentifier": cfg.MAC_BUNDLE_ID,
+        "CFBundleShortVersionString": version,
+    })
+    info_path.write_bytes(plistlib.dumps(info))
 
 
-def _mac_dmg(app: Path, dmg: Path, sign: str | None) -> None:
-    import tempfile
+def make_dmg(app: Path, out: Path, sign: str | None) -> None:
     log("Making the disk image")
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp) / cfg.APP_NAME
         stage.mkdir()
-        run("ditto", app, stage / app.name, env=dict(os.environ))
+        run("ditto", app, stage / app.name)
         (stage / "Applications").symlink_to("/Applications")
-        if dmg.exists():
-            dmg.unlink()
-        run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage,
-            "-format", "ULMO", "-fs", "HFS+", dmg, env=dict(os.environ))
+        if out.exists():
+            out.unlink()
+        run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage, "-format", "ULMO", "-fs", "HFS+", out)
     if sign:
-        run("codesign", "--force", "--timestamp", "--sign", sign, dmg, env=dict(os.environ))
+        run("codesign", "--force", "--timestamp", "--sign", sign, out)
+
+
+# -- Windows ------------------------------------------------------------------------------
 
 
 def build_windows(args, platform: str, version: str) -> list[Path]:
-    src = args.src
-    out = write_gn_args(src, platform)
-    autoninja(src, platform, ["chrome", "mini_installer"], args.jobs)
-    arch = "x64" if platform == "win64" else "arm64"
+    archive = fetch_chromium(platform)
+    work = args.work / platform
+    reset_dir(work)
+    log("Unpacking ungoogled-chromium")
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(work)
+    inner = _single_dir(work)
+    app = work / cfg.APP_NAME
+    inner.rename(app)
+
+    log("Rebranding")
+    stage_initial_preferences(app)
+    if args.orbit_pass:
+        build_orbit_pass(args.orbit_pass.resolve(), app / "extensions")
+
     DIST.mkdir(exist_ok=True)
-    outputs = []
-    installer = out / "mini_installer.exe"
-    if installer.exists():
-        setup = DIST / f"Orbit-Browser-{version}-Windows-{arch}-Setup.exe"
-        shutil.copyfile(installer, setup)
-        outputs.append(setup)
-    # A portable zip of the install image (the files mini_installer packs).
-    stage_distribution(out)
-    portable = DIST / f"Orbit-Browser-{version}-Windows-{arch}.zip"
-    _zip_install_image(out, portable)
-    outputs.append(portable)
-    return outputs
-
-
-def _zip_install_image(out: Path, portable: Path) -> None:
-    """The browser's own files from the output tree (not the whole out/, which
-    holds build intermediates): everything the installer ships."""
-    names = ["chrome.exe", "chrome_proxy.exe", "chrome_elf.dll", "*.dll", "*.pak",
-             "*.bin", "icudtl.dat", "resources.pak", "v8_context_snapshot.bin",
-             "initial_preferences", "locales", "Orbit Browser"]
+    portable = DIST / f"Orbit-Browser-{version}-Windows-x64.zip"
     if portable.exists():
         portable.unlink()
     with zipfile.ZipFile(portable, "w", zipfile.ZIP_DEFLATED) as z:
-        for pattern in names:
-            for path in sorted(out.glob(pattern)):
-                if path.is_file():
-                    z.write(path, Path(cfg.APP_NAME) / path.name)
-                elif path.is_dir():
-                    for f in sorted(path.rglob("*")):
-                        if f.is_file():
-                            z.write(f, Path(cfg.APP_NAME) / f.relative_to(out))
+        for path in sorted(app.rglob("*")):
+            if path.is_file():
+                z.write(path, Path(cfg.APP_NAME) / path.relative_to(app))
+    stage_policy_file(DIST)
+    # The installer (which writes the HKLM policy and the Start-menu entry) is
+    # out of scope of the repack itself; the portable zip is the artifact.
+    return [portable]
+
+
+# -- Linux --------------------------------------------------------------------------------
 
 
 def build_linux(args, platform: str, version: str) -> list[Path]:
-    src = args.src
-    out = write_gn_args(src, platform)
-    autoninja(src, platform, ["chrome", "chrome/installer/linux:unstable_deb"], args.jobs)
-    arch = "x86_64" if platform == "linux" else "aarch64"
-    tree = out / cfg.LINUX_NAME
-    _stage_linux_tree(out, tree)
-    stage_distribution(tree)
+    archive = fetch_chromium(platform)
+    work = args.work / platform
+    reset_dir(work)
+    log("Unpacking ungoogled-chromium")
+    run("tar", "-xf", archive, "-C", work)
+    inner = _single_dir(work)
+    app = work / cfg.LINUX_NAME
+    inner.rename(app)
+
+    log("Rebranding")
+    stage_initial_preferences(app)
+    icon = BRANDING / "content" / "icon128.png"
+    if icon.exists():
+        shutil.copyfile(icon, app / f"{cfg.LINUX_NAME}.png")
+    (app / f"{cfg.LINUX_NAME}.desktop").write_text(linux_desktop())
+    if args.orbit_pass:
+        build_orbit_pass(args.orbit_pass.resolve(), app / "extensions")
+
     DIST.mkdir(exist_ok=True)
-    tarxz = DIST / f"Orbit-Browser-{version}-Linux-{arch}.tar.xz"
-    if tarxz.exists():
-        tarxz.unlink()
+    out = DIST / f"Orbit-Browser-{version}-Linux-x86_64.tar.xz"
+    if out.exists():
+        out.unlink()
     log("Packaging the tarball")
-    with tarfile.open(tarxz, "w:xz") as archive:
-        archive.add(tree, arcname=cfg.LINUX_NAME, filter=_reproducible)
-    return [tarxz]
+    with tarfile.open(out, "w:xz") as archive_out:
+        archive_out.add(app, arcname=app.name, filter=_reproducible)
+    stage_policy_file(DIST)
+    return [out]
 
 
-def _stage_linux_tree(out: Path, tree: Path) -> None:
-    if tree.exists():
-        shutil.rmtree(tree)
-    tree.mkdir(parents=True)
-    wanted = ["chrome", "chrome_crashpad_handler", "chrome_sandbox", "*.pak", "*.bin",
-              "*.so", "icudtl.dat", "locales", "resources", "product_logo_48.png"]
-    for pattern in wanted:
-        for path in sorted(out.glob(pattern)):
-            dest = tree / path.relative_to(out)
-            if path.is_dir():
-                shutil.copytree(path, dest, symlinks=True, dirs_exist_ok=True)
-            elif path.is_file():
-                shutil.copyfile(path, dest)
-    (tree / f"{cfg.LINUX_NAME}.desktop").write_text(_linux_desktop())
-
-
-def _linux_desktop() -> str:
+def linux_desktop() -> str:
     return "\n".join([
         "[Desktop Entry]", "Version=1.0", "Type=Application",
         f"Name={cfg.APP_NAME}", "GenericName=Web Browser",
@@ -312,6 +279,22 @@ def _linux_desktop() -> str:
         "Categories=Network;WebBrowser;", f"StartupWMClass={cfg.LINUX_NAME}",
         "MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;", "",
     ])
+
+
+# -- helpers ------------------------------------------------------------------------------
+
+
+def reset_dir(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+
+
+def _single_dir(parent: Path) -> Path:
+    dirs = [p for p in parent.iterdir() if p.is_dir()]
+    if len(dirs) != 1:
+        raise SystemExit(f"Expected one directory in the unpacked build, found {[p.name for p in dirs]}.")
+    return dirs[0]
 
 
 def _reproducible(info: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -327,53 +310,33 @@ def _reproducible(info: tarfile.TarInfo) -> tarfile.TarInfo:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--platform", action="append", choices=PLATFORMS, help="repeatable")
-    parser.add_argument("--orbit-pass", type=Path, default=ROOT.parent / "Orbit Pass", help="the Orbit Pass checkout")
+    parser.add_argument("--orbit-pass", type=Path, default=ROOT.parent / "Orbit Pass", help="the Orbit Pass checkout (bundled as a pre-installed extension)")
     parser.add_argument("--build", type=int, default=0, help="the build number (CI's run number)")
     parser.add_argument("--release", action="store_true", help="a release: the version without -build.N")
     parser.add_argument("--sign", help="a Developer ID identity for the Mac app (ad hoc when left out)")
-    parser.add_argument("--jobs", "-j", type=int, help="autoninja parallelism")
-    parser.add_argument("--no-sync", action="store_true", help="reuse the source tree as it is (skip fetch/sync and the patch reset)")
-    parser.add_argument("--shallow", action="store_true", help="shallow gclient sync (no history; CI)")
+    parser.add_argument("--work", type=Path, default=WORK, help="where the unpacked builds go (default work/)")
     args = parser.parse_args(argv)
+    args.work = args.work.resolve()
 
     if args.platform:
         platforms = args.platform
     elif sys.platform == "darwin":
-        platforms = ["mac"]
+        platforms = ["mac-arm64"]
     elif sys.platform.startswith("linux"):
         platforms = ["linux"]
     else:
         platforms = ["win64"]
 
     version = cfg.orbit_version(args.build, args.release)
-    chromium = sync.pin()["version"]
-    log(f"Orbit Browser {version} on Chromium {chromium}")
-
-    if not args.no_sync:
-        sync.ensure_depot_tools()
-        args.src = sync.ensure_source(shallow=args.shallow)
-    else:
-        args.src = sync.SRC
-        if not (args.src / ".git").exists():
-            raise SystemExit("--no-sync, but there is no source tree yet. Run without it once.")
-
+    log(f"Orbit Browser {version} repacking ungoogled-chromium {pin().get('version') or '(unpinned)'}")
     outputs = []
     for platform in platforms:
-        log(f"Applying Orbit's branding, patches and files ({platform})")
-        apply_branding(args.src, version, args.build)
-        patches.apply_all(args.src, platform_os(platform))
-        pass_out = args.src / "out" / OUT_DIR[platform] / "orbit-pass"
-        build_orbit_pass(args.orbit_pass.resolve(), pass_out)
-        if platform == "mac":
-            outputs += build_mac(args, version)
-        elif platform.startswith("linux"):
+        if platform.startswith("mac"):
+            outputs += build_mac(args, platform, version)
+        elif platform == "linux":
             outputs += build_linux(args, platform, version)
         else:
             outputs += build_windows(args, platform, version)
-        # Chromium's source tree is mutated per platform; reset before the next.
-        if not args.no_sync and platform != platforms[-1]:
-            sync._reset_tree()
-
     for out in outputs:
         print(out.relative_to(ROOT))
     return 0

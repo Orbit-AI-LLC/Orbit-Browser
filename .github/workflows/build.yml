@@ -1,23 +1,21 @@
 name: Build and release
 
-# Orbit Browser is a source fork of Chromium (scripts/build.py): the compile is
-# tens of GB of source and hours per platform, far past a GitHub-hosted runner's
-# disk and time, so the build and release jobs run on self-hosted runners
-# labelled [self-hosted, orbit-browser, <os>] with depot_tools' prerequisites
-# and a persistent .cache/ + src/ checkout. Pushes and pull requests still run
-# the fast checks (config and update signatures) on hosted runners.
+# Orbit Browser repacks ungoogled-chromium (scripts/build.py): download the
+# pinned build, change what needs no compiler (name, icon, policies, first-run
+# preferences, Orbit Pass), repackage. It is fast and runs on standard
+# GitHub-hosted runners.
 #
-#   - config + signature tests: every push and PR (hosted).
-#   - a daily check that chromium.json is the newest stable Chromium.
-#   - build + publish: every push to main (prerelease) and every v* tag
-#     (release), plus manual dispatch (self-hosted runners).
+#   - config + signature tests: every push and PR.
+#   - a daily check that chromium.json is near the newest ungoogled-chromium.
+#   - build + publish: every push to main (prerelease) and every v* tag (release),
+#     plus manual dispatch.
 #
 # Orbit Browser has its own version, VERSION in scripts/orbit_config.py; a tag
-# must be it (v0.1.0). Installed browsers update themselves from these releases
-# through Orbit Mission Control, once the release carries signatures made with
-# Orbit Browser's update key (a Tauri signing key, as in the other Orbit apps):
+# must be it (v0.1.0). Installed browsers update from these releases through Orbit
+# Mission Control, once the release carries signatures made with Orbit Browser's
+# update key (a Tauri signing key, as in the other Orbit apps):
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-# Orbit Pass is built in from its own private repository:
+# Orbit Pass is bundled from its own private repository:
 #   ORBIT_PASS_TOKEN            read-only Contents on Orbit-AI-LLC/Orbit-Pass
 # The Mac app is signed and notarized with the Developer ID secrets (as Orbit Pass):
 #   MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD, APPLE_TEAM_ID,
@@ -46,14 +44,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compare with the newest stable Chromium
+      - name: Compare with the newest ungoogled-chromium
         run: |
-          pinned=$(python3 -c 'import json; print(json.load(open("chromium.json"))["version"])')
-          latest=$(curl -fsSL "https://chromiumdash.appspot.com/fetch_releases?channel=Stable&platform=Mac&num=1" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["version"])')
+          pinned=$(python3 -c 'import json; print(json.load(open("chromium.json")).get("version") or "none")')
+          latest=$(curl -fsSL -H "Accept: application/vnd.github+json" https://api.github.com/repos/ungoogled-software/ungoogled-chromium/tags | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')
           if [ "$pinned" != "$latest" ]; then
-            echo "::warning::Chromium $latest is stable and Orbit Browser is on $pinned. Run python3 scripts/update_chromium.py, re-anchor any failing patch, and push."
+            echo "::warning::ungoogled-chromium $latest is out and Orbit Browser pins $pinned. Run scripts/update_chromium.py with the new URLs."
           else
-            echo "Orbit Browser is on Chromium $pinned, the newest stable."
+            echo "Orbit Browser pins ungoogled-chromium $pinned."
           fi
 
   tests:
@@ -63,8 +61,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography
-      # The committed config (pin, GN args, branding, policies) and the shared
-      # update-signature protocol. No source tree or compiler needed.
       - run: python3 -m unittest discover -s tests
 
   version:
@@ -104,24 +100,23 @@ jobs:
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build (${{ matrix.platform }})
+    name: Build (${{ matrix.name }})
     needs: [version, tests]
-    # Every push to main and every v* tag (and manual runs) builds. The Chromium
-    # compile only runs on a self-hosted runner with the source checkout; it is
-    # too large and slow for a hosted runner, so these runners must exist (labels
-    # below) or the jobs queue. Pull requests build nothing (tests only).
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: mac
-            runner: [self-hosted, orbit-browser, macos]
-          - platform: win64
-            runner: [self-hosted, orbit-browser, windows]
-          - platform: linux
-            runner: [self-hosted, orbit-browser, linux]
-    runs-on: ${{ matrix.runner }}
+          - name: linux
+            os: ubuntu-latest
+            platforms: --platform linux
+          - name: windows
+            os: windows-latest
+            platforms: --platform win64
+          - name: mac
+            os: macos-latest
+            platforms: --platform mac-arm64 --platform mac-x64
+    runs-on: ${{ matrix.os }}
     env:
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -135,8 +130,15 @@ jobs:
           repository: Orbit-AI-LLC/Orbit-Pass
           token: ${{ secrets.ORBIT_PASS_TOKEN }}
           path: orbit-pass
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Load the Developer ID (mac)
-        if: matrix.platform == 'mac' && env.MACOS_CERTIFICATE_P12 != ''
+        if: matrix.name == 'mac' && env.MACOS_CERTIFICATE_P12 != ''
+        shell: bash
         run: |
           set -euo pipefail
           keychain="$RUNNER_TEMP/build.keychain-db"
@@ -150,28 +152,29 @@ jobs:
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           echo "SIGN_IDENTITY=Developer ID Application" >> "$GITHUB_ENV"
       - name: Build
+        shell: bash
         run: >
-          python3 scripts/build.py --platform ${{ matrix.platform }}
+          python3 scripts/build.py ${{ matrix.platforms }}
           --orbit-pass orbit-pass --build ${{ needs.version.outputs.build }}
           ${{ needs.version.outputs.release }}
           ${SIGN_IDENTITY:+--sign "$SIGN_IDENTITY"}
       - name: Notarize (mac)
-        if: matrix.platform == 'mac' && env.MACOS_CERTIFICATE_P12 != ''
+        if: matrix.name == 'mac' && env.MACOS_CERTIFICATE_P12 != ''
+        shell: bash
         run: |
-          dmg=$(ls dist/*.dmg)
-          xcrun notarytool submit "$dmg" --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
-          xcrun stapler staple "$dmg"
+          for dmg in dist/*.dmg; do
+            xcrun notarytool submit "$dmg" --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$dmg"
+          done
       - uses: actions/upload-artifact@v7
         with:
-          name: Orbit-Browser-${{ matrix.platform }}
+          name: Orbit-Browser-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
   release:
     name: Publish release
     needs: [version, build]
-    # A push to main publishes a prerelease (0.1.0-build.N); a v* tag publishes a
-    # release. The version job sets prerelease accordingly.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -187,7 +190,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-cryptography
-          python3 scripts/sign_update.py --version "${{ needs.version.outputs.version }}" artifacts/*.app.tar.gz artifacts/*-Setup.exe artifacts/*.tar.xz
+          shopt -s nullglob
+          python3 scripts/sign_update.py --version "${{ needs.version.outputs.version }}" artifacts/*.app.tar.gz artifacts/*.tar.xz artifacts/*.zip
       - name: Write the update manifest
         run: |
           python3 .github/scripts/orbit_update_manifest.py artifacts \

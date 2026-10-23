@@ -1,8 +1,11 @@
 {
-  "version": "141.0.7390.65",
-  "milestone": 141,
-  "channel": "stable",
-  "src": "https://chromium.googlesource.com/chromium/src.git",
-  "depot_tools": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
-  "notes": "The Chromium release Orbit Browser is forked from. Unlike a binary repack, the source is pinned by git tag (version) and verified by git, not by a checksum of a download. Move to a new Chromium with `python3 scripts/update_chromium.py`, which pins the newest stable tag and then checks that every patch in patches/ still applies to it. depot_tools is pinned to a branch, not a commit: `gclient sync` follows the DEPS of the checked-out tag."
+  "version": "",
+  "source": "ungoogled-chromium",
+  "builds": {
+    "win64": {"url": "", "sha256": ""},
+    "mac-x64": {"url": "", "sha256": ""},
+    "mac-arm64": {"url": "", "sha256": ""},
+    "linux": {"url": "", "sha256": ""}
+  },
+  "notes": "The prebuilt Chromium Orbit Browser repacks: ungoogled-chromium, whose builds already have Google's web services, sign-in and reporting removed. Each platform pins the download URL and its SHA-256, the way the former firefox.json did. These are empty here and populated by `python3 scripts/update_chromium.py`, which reads the latest ungoogled-chromium release and its checksums; scripts/build.py refuses a build whose checksum is empty or does not match. ungoogled-chromium ships per-architecture macOS builds (no universal), so mac-x64 and mac-arm64 are separate."
 }

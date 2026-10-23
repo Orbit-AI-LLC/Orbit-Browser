@@ -2,18 +2,11 @@
 .venv/
 node_modules/
 __pycache__/
-# depot_tools and other downloads (scripts/sync.py).
+# Downloaded ungoogled-chromium builds (scripts/build.py, scripts/net.py).
 .cache/
-# The Chromium source checkout, synced to chromium.json (scripts/sync.py):
-# tens of GB, never committed. out/ (the build) lives under it.
-/src/
-# gclient's generated files.
-/.gclient
-/.gclient_entries
-/.gclient_previous_sync_commits
-# Finished packages (scripts/build.py).
-dist/
+# Unpacked trees and finished packages (scripts/build.py).
 /work*/
+dist/
 
 # Claude Code session state and worktrees; only the shared settings are kept
 .claude/*

@@ -1,203 +1,144 @@
 # Orbit Browser
 
-Orbit's web browser for the Mac, Windows and Linux. Its engine is Chromium, the
-newest stable release (pinned in `chromium.json`). Orbit Browser is a **source
-fork**: it compiles Chromium with Orbit's changes, rather than repacking a
-downloaded binary, so it can change anything — the engine, the UI, the services —
-not only what a repack can reach.
+Orbit's web browser for the Mac, Windows and Linux. Its engine is Chromium, by
+way of **ungoogled-chromium** — Chromium with Google's web services, sign-in and
+reporting already removed. Orbit Browser *repacks* a pinned ungoogled-chromium
+build (in `chromium.json`) and makes it Orbit's, without a compiler.
 
 | | What Orbit Browser does | Where |
 | --- | --- | --- |
-| **Name and logo** | "Orbit Browser" everywhere Chromium names itself; the Orbit family's mark, a globe with an orbit for its equator, on violet and magenta | `branding/BRANDING`, `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
-| **Not Google Chrome** | Built un-Google-branded, with no Google API keys compiled in, so none of Chromium's calls to Google's sign-in, Sync, Safe Browsing or location services have credentials | `build/args/common.gn` |
-| **Google's AI** | Every GenAI feature off and locked (`GenAiDefaultSettings` and each individual one), so Orbit AI is the only assistant | `distribution/policies/orbit.json` |
-| **Orbit AI** | The only assistant: a side panel, "Ask Orbit AI" on selected text, "Summarize page" | `chromium_src/chrome/browser/orbit/`, Orbit AI's `/threads/start/` |
-| **Orbit Pass** | Built in: force-installed and pinned to the toolbar from the first start, un-removable | `distribution/policies/orbit.json`, Orbit Pass's `extension/` |
-| **Updates** | Chromium's own updater (Omaha/Keystone) not built; Orbit Browser updates itself from Orbit Mission Control as every other Orbit app does, with its own version (not Chromium's) | `build/args/common.gn`, `chromium_src/chrome/browser/orbit/update/` |
-| **Google's services** | No Google account or Sync, no metrics, background services, component updates, spelling or prediction services, no Safe Browsing lookups | `distribution/policies/orbit.json` |
-| **Orbit's instead** | An Orbit button on the toolbar: your Orbit account and the Orbit apps; the Orbit apps as managed bookmarks and the new tab's shortcuts | `chromium_src/chrome/browser/orbit/`, `distribution/policies/orbit.json` |
-| **Autofill** | Orbit Pass's alone: Chromium's password manager, card and address autofill are off and locked | `distribution/policies/orbit.json` |
-
-The engine itself (Blink, V8, the web platform, security fixes) is Chromium's:
-Orbit Browser reports itself to websites as the Chromium it is built on.
+| **Base** | ungoogled-chromium, whose builds have Google's services, sign-in, Safe Browsing lookups and reporting removed upstream | `chromium.json` |
+| **Name and icon** | "Orbit Browser" as the app's name, the Orbit family's mark as its icon (the deep in-UI strings stay "Chromium" — a repack can't recompile them) | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
+| **Google's AI** | Every GenAI feature off and locked by policy, so no Chromium assistant is offered | `distribution/policies/orbit.json` |
+| **Orbit AI, the Orbit button** | Orbit's assistant, account and apps, delivered as a force-installed Orbit extension (a repack adds UI through extensions, not built-in C++) | `distribution/policies/orbit.json` |
+| **Orbit Pass** | Built in: force-installed and pinned, un-removable; bundled from the Orbit Pass checkout | `distribution/policies/orbit.json`, Orbit Pass's `extension/` |
+| **Google's services** | No Google account/Sync, metrics, background services, component updates, spelling or prediction services | `distribution/policies/orbit.json` |
+| **Orbit's instead** | The Orbit apps as managed bookmarks, the Orbit home page and new tab | `distribution/policies/orbit.json`, `distribution/initial_preferences` |
+| **Site data** | ungoogled-chromium deletes site data when you close all windows by default; Orbit sets it back to "Allow sites to save data" | `distribution/initial_preferences` |
+| **Autofill** | Orbit Pass's alone: Chromium's password manager, card and address autofill off and locked | `distribution/policies/orbit.json` |
 
 ## How it's made
 
-`scripts/build.py` *compiles* Chromium. It:
-
-1. fetches depot_tools and the Chromium source `chromium.json` pins
-   (`scripts/sync.py`): a big, long first checkout (tens of GB) and `gclient
-   sync` for every dependency the pinned tag's DEPS names;
-2. applies Orbit's branding (`branding/`), patches (`patches/`) and new files
-   (`chromium_src/`) onto a pristine tree (`scripts/patches.py`);
-3. runs `gn gen` with Orbit's GN arguments (`build/args/`) and `autoninja` the
-   browser;
-4. packages per platform into `dist/`.
+`scripts/build.py` *repacks* a prebuilt Chromium rather than compiling it: it
+downloads the ungoogled-chromium build `chromium.json` pins (checking its
+SHA-256), unpacks it, and changes what can be changed without a compiler — the
+app's name and icon, the enterprise policies, the first-run preferences, and
+Orbit Pass built in — then repackages. That keeps builds small and fast (minutes
+on a standard GitHub runner).
 
 ```bash
-python3 scripts/build.py                                   # the host's default: Mac on a Mac, Linux on Linux, else Windows x64
-python3 scripts/build.py --platform win64 --platform win64-aarch64
-python3 scripts/build.py --platform linux --platform linux-aarch64
-python3 scripts/build.py --no-sync                         # reuse the source tree as it is (faster iteration)
-python3 -m unittest discover -s tests                      # the committed config and the update signatures
-python3 scripts/update_chromium.py --check                 # every patch still applies to the pinned Chromium
+python3 scripts/build.py                              # the host's default (Mac on a Mac, Linux on Linux, else Windows)
+python3 scripts/build.py --platform mac-arm64 --platform mac-x64
+python3 scripts/build.py --platform win64
+python3 scripts/build.py --platform linux
+python3 -m unittest discover -s tests                 # the committed config and the update signatures
 ```
 
-A source fork is the heavy path a repack avoids: tens of GB of source and hours
-per platform, and a rebuild for every Chromium security release. The trade is
-reach — a repack can only change the files it can unpack; a fork can change the
-browser itself, which is what the Orbit button, the Orbit AI side panel and the
-Orbit updater (replacing Chromium's) need.
+| Platform | Build on | Makes (in `dist/`) |
+| --- | --- | --- |
+| `mac-arm64`, `mac-x64` | macOS | `Orbit-Browser-<version>-macOS-AppleSilicon.dmg` / `…-Intel.dmg` and an `.app.tar.gz` update payload each |
+| `win64` | Windows | a portable `…-Windows-x64.zip` |
+| `linux` | Linux | `…-Linux-x86_64.tar.xz` |
 
-| Platform | Build on | Needs | Makes (in `dist/`) |
-| --- | --- | --- | --- |
-| `mac` | macOS | depot_tools' prerequisites, Xcode, Python 3, Node (for Orbit Pass) | `Orbit-Browser-<version>-macOS.dmg` (universal) and an `.app.tar.gz` update payload |
-| `win64`, `win64-aarch64` | Windows | depot_tools' prerequisites (Visual Studio), Python 3, Node | `…-Windows-x64-Setup.exe` / `…-arm64-Setup.exe` and a portable `.zip` |
-| `linux`, `linux-aarch64` | Linux | depot_tools' prerequisites (`build/install-build-deps.sh`), Python 3, Node | `…-Linux-x86_64.tar.xz` / `…-Linux-aarch64.tar.xz` |
-
-Windows and Linux builds run on their own OS (Chromium's cross-compiles need the
-host toolchain); the Mac build needs macOS. Orbit Pass comes from the Orbit Pass
-checkout beside this one (`../Orbit Pass`, or `--orbit-pass <path>`): the build
-runs its `extension/scripts/package.mjs --chrome`. Downloads and the source
-checkout are kept in `.cache/` and `src/`. `--sign "Developer ID Application"`
-signs the Mac app.
+ungoogled-chromium ships per-architecture macOS builds (no universal), so the Mac
+app is two builds. Orbit Pass comes from the Orbit Pass checkout beside this one
+(`../Orbit Pass`, or `--orbit-pass <path>`): the build runs its
+`extension/scripts/package.mjs --chrome`. Downloads are kept in `.cache/`,
+unpacked trees in `work/`. `--sign "Developer ID Application"` signs the Mac app.
 
 **Versions.** Orbit Browser has its own version, `VERSION` in
 `scripts/orbit_config.py`, apart from the Chromium it is built on
 (`chromium.json`): `0.1.0` for a release, `0.1.0-build.N` for a build on `main`,
-`0.1.0-local` here (`--build N`, `--release`). People see it in the About window
-and Settings, with "Built on Chromium …" under it. Raise `VERSION` for a release
-(tag `v<VERSION>`); a new Chromium alone needs no new version, since every build
-on `main` is newer by build number.
+`0.1.0-local` here. Raise `VERSION` for a release (tag `v<VERSION>`).
 
 ### Where Orbit's changes live
 
-Everything Orbit Browser changes is kept apart from Google's code, the way the
-Chromium forks (Brave, ungoogled-chromium, Vivaldi) keep theirs, so every change
-is visible and nothing is quietly edited in place:
+A repack can only change what it can unpack and re-pack, so everything Orbit does
+is configuration, not compiled code:
 
-- **Branding data** — the name (`branding/BRANDING`) and the product icons
-  (`branding/`) — is copied over Chromium's by `scripts/build.py` before the
-  build. The mark is rendered by `scripts/orbitmark.swift` (the Orbit family's
-  shared renderer) through `scripts/build_icon.py`; edit those, never the files
-  in `branding/`.
-- **Build-time choices** are **GN arguments** in `build/args/` (a `common.gn`
-  and one file per platform): un-Google-branded, no Google API keys, proprietary
-  codecs on, Chromium's updater not built.
-- **Edits to Chromium's own files** are **unified-diff patches** in `patches/`,
-  one per file (`patches/<path-in-src>.patch`), applied with `git apply` —
-  strict, so a Chromium that moved the code stops the build and names the patch.
-  See `patches/README.md`.
-- **Whole new Orbit files** — the Orbit browser component — live in
-  `chromium_src/`, copied into the source tree as themselves. See
-  `chromium_src/README.md`.
-- **What a running browser does by policy** — the locked features and the
-  first-run defaults — is in `distribution/` (`policies/orbit.json` and
-  `initial_preferences`). See `distribution/README.md`.
+- **Branding** — the app name and icon — in `branding/`, applied by
+  `scripts/build.py` (the bundle name/Info.plist on macOS, the folder and `.desktop`
+  on Linux). The mark is rendered by `scripts/orbitmark.swift` (the Orbit family's
+  shared renderer) through `scripts/build_icon.py`; edit those, not `branding/`.
+- **Locked behaviour** — `distribution/policies/orbit.json`, Chromium's enterprise
+  policy, placed at the OS managed-policy location by the installer.
+- **First-run defaults** — `distribution/initial_preferences`, shipped inside the
+  app (this is where the ungoogled "clear site data on exit" default is turned off).
+- **Orbit's data** (version, apps, account, update feed, Orbit Pass id) — one file,
+  `scripts/orbit_config.py`.
 
-`scripts/patches.py` applies the patches and overrides; `scripts/build.py` does
-the branding, the GN args and the packaging.
+See `distribution/README.md` for the policy/preferences split and where each is placed.
+
+### What a repack cannot do
+
+A repack can't recompile Chromium, so some things the former source-fork plan could
+do are out of reach and handled differently:
+
+- **Deep rebranding.** "Chromium" in the compiled UI strings (About, menus) stays;
+  only the app's name and icon are Orbit's.
+- **Built-in Orbit UI.** The Orbit toolbar button and the Orbit AI side panel ship
+  as a **force-installed Orbit extension**, not built-in browser code.
+- **An in-app self-updater.** See [Updates](#updates).
 
 ### Moving to a new Chromium
 
-Google ships a new stable Chromium about every four weeks and security fixes
-between them; Orbit Browser gets them only by being rebuilt. GitHub checks daily
-(see [Builds on GitHub](#builds-on-github)). Then:
+ungoogled-chromium publishes a new build after each Chromium release; Orbit Browser
+gets it by re-pinning. The binaries are built and hosted by ungoogled-chromium's
+contributors (linked from the [binaries page][bin]), so the per-platform URLs are
+passed in:
 
 ```bash
-python3 scripts/update_chromium.py                   # pin the newest stable, then check every patch against it
-python3 scripts/build.py                             # build
+python3 scripts/update_chromium.py                    # prints the newest version and what to pass
+python3 scripts/update_chromium.py <version> \
+    --url win64=<url> --url mac-x64=<url> --url mac-arm64=<url> --url linux=<url>
+python3 scripts/build.py                               # build
 ```
 
-`update_chromium.py` pins the version in `chromium.json`, syncs the source to it,
-and tries every patch in `patches/` (with `git apply --check`), printing which
-still apply and which don't. Give it a version (`142.0.7444.52`) to pin that one;
-`--check` alone re-checks the current pin. A patch that no longer applies is one
-whose surrounding code Chromium moved; re-anchor it by hand:
+`update_chromium.py` downloads each build, computes its SHA-256, and writes
+`chromium.json`; `build.py` refuses a download whose checksum differs.
 
-```bash
-python3 scripts/sync.py                              # src/ at the pinned Chromium
-cd src && $EDITOR chrome/browser/…                   # make Orbit's change again
-git diff chrome/browser/… > ../patches/chrome/browser/….patch
-cd .. && python3 scripts/update_chromium.py --check
-```
+[bin]: https://ungoogled-software.github.io/ungoogled-chromium-binaries/
 
-**Never loosen a patch so it applies without the change it carries**, or a
-feature Orbit removed comes back quietly.
+## Google's AI and services, removed
 
-## Google's AI features, removed
-
-Chromium's GenAI features are switched off and **locked** by enterprise policy
-(`distribution/policies/orbit.json`), with the umbrella `GenAiDefaultSettings`
-set to *disabled* (so a GenAI feature Google adds later under it arrives off) and
-each individual one set off too: the tab organizer, "Help me write", themes
-creation, history search, tab compare, DevTools AI, autofill prediction, Gemini,
-and the on-device foundational model download. Orbit AI is the only assistant
-(the Orbit browser component). `chrome://policy` lists every policy in force;
-Settings says the browser is "managed by your organization" because of them.
-
-## Orbit, not Google's services
-
-Chromium leans on Google's services throughout. Orbit Browser turns them off
-(`distribution/policies/orbit.json`) and puts Orbit's in their place: no Google
-account or Sync (`BrowserSignin`, `SyncDisabled`), no usage metrics or anonymized
-data collection, no background mode, no component updates (Orbit updates itself),
-no Google Safe Browsing lookups, no spelling or network-prediction services. The
-build also ships **no Google API keys** (`build/args/common.gn`), so even a
-missed switch has no credentials to call Google with.
+ungoogled-chromium removes Google's web services, sign-in, Safe Browsing lookups
+and reporting at the source. Orbit locks the rest off by enterprise policy
+(`distribution/policies/orbit.json`): the umbrella `GenAiDefaultSettings` disables
+every GenAI feature (and each individual one — Gemini, the tab organizer, "Help me
+write", history search, the on-device model), and `BrowserSignin`, `SyncDisabled`,
+`MetricsReportingEnabled: false`, `BackgroundModeEnabled: false` and
+`ComponentUpdatesEnabled: false` keep the browser off Google's services. `chrome://policy`
+lists them; Settings says the browser is managed.
 
 ## Orbit Pass is the password manager
 
-Chromium's own password manager and autofill are off and locked, and Orbit Pass
-is **force-installed and un-removable** (`ExtensionSettings` →
-`force_installed`, `force_pinned`), served by Orbit Mission Control. Its stable
-extension id is the same in every copy of Orbit Browser, so Orbit Pass's server
-knows the address a sign-in comes back to; keep it in step between this
-repository (`scripts/orbit_config.py`) and Orbit Pass (`extension/`). Orbit
-Pass's Chromium manifest is made by that repository's
+Chromium's own password manager and autofill are off and locked, and Orbit Pass is
+**force-installed and un-removable** (`ExtensionSettings` → `force_installed`,
+`force_pinned`), served by Orbit Mission Control. Its stable extension id is the
+same in every copy (keep it in step between `scripts/orbit_config.py` and Orbit
+Pass's `extension/`). Orbit Pass's Chromium manifest is made by that repository's
 `extension/scripts/package.mjs --chrome`; change the extension there, not here.
 
 ## Updates
 
-Orbit Browser updates itself from Orbit Mission Control, the same as every other
-Orbit app (`src-tauri/src/updates.rs` in each; keep them alike). Chromium's own
-updater is not built (`build/args/common.gn`). Half a minute after start and
-every four hours after (and from Help › Check for Updates…) the browser asks
-Mission Control whether a newer build exists; a newer one is downloaded, its
-signature checked against the public key the browser carries
-(`scripts/orbit_config.py` `ORBIT_UPDATES`, the signature naming the version),
-and installed when the browser quits. `scripts/sign_update.py` signs the payloads
-(minisign/Blake2b, a Tauri signing key as in the other Orbit apps);
-`.github/scripts/orbit_update_manifest.py` writes the release's
-`orbit-update.json`. This behaviour is implemented in the Orbit browser component
-(`chromium_src/chrome/browser/orbit/update/`).
+Orbit Browser is meant to update itself from Orbit Mission Control, as every other
+Orbit app does (`scripts/sign_update.py` signs the payloads, minisign/Blake2b, the
+version in the signature; `.github/scripts/orbit_update_manifest.py` writes the
+release manifest). A repack can't embed an in-app updater the way a source fork
+could, so the update **client** (checking the feed, verifying the signature,
+replacing the app) ships as part of the force-installed Orbit extension / a small
+companion, not built into the browser. The release side (signing, the manifest) is
+in place; the client is the remaining piece.
 
 ## Builds on GitHub
 
-`.github/workflows/build.yml`:
+`.github/workflows/build.yml`, all on **standard** GitHub-hosted runners (the
+repack is fast):
 
-- **every push and pull request** runs the fast checks on a hosted runner: the
-  committed config (`tests/test_config.py`) and the shared update-signature
-  protocol (`tests/test_updates.py`);
-- **daily** it checks that `chromium.json` is the newest stable Chromium and
-  warns if not;
-- **a `v*` tag or a manual run** builds each platform on a **self-hosted runner**
-  (the Chromium compile is far past a hosted runner's disk and time), signs and
-  notarizes the Mac app, signs the update payloads and publishes the release.
+- **every push and pull request** runs the config and update-signature tests;
+- **daily** it checks `chromium.json` against the newest ungoogled-chromium;
+- **every push to main (prerelease) and every `v*` tag (release)**, plus manual
+  runs, repacks each platform, signs and notarizes the Mac app, signs the update
+  payloads and publishes.
 
-See the top of that file for the secrets (Developer ID, notarization, the update
-signing key, the Orbit Pass token).
-
-## Status
-
-The pivot from the former Firefox repack to a Chromium source fork is in place:
-the build pipeline, the pin and sync, the GN arguments, the branding, the
-Chromium enterprise policies, the first-run preferences, Orbit Pass's
-force-install, and the tests are complete and config-verified. What remains is
-authored against a synced Chromium tree, because its C++ APIs (Views, the side
-panel registry, the toolbar container) change between milestones and are not
-committed as code that would not compile: the Orbit browser component
-(`chromium_src/chrome/browser/orbit/` — the Orbit button, the Orbit AI side
-panel, the new-tab wallpapers and the updater) and the few `patches/` that wire
-it into Chromium's build and UI (listed in `patches/README.md` and
-`chromium_src/chrome/browser/orbit/README.md`).
+See the top of that file for the secrets.
