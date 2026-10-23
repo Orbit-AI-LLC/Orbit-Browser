@@ -9,7 +9,8 @@ name: Build and release
 #
 #   - config + signature tests: every push and PR (hosted).
 #   - a daily check that chromium.json is the newest stable Chromium.
-#   - build + publish: on a v* tag or workflow_dispatch (self-hosted).
+#   - build + publish: every push to main (prerelease) and every v* tag
+#     (release), plus manual dispatch (self-hosted runners).
 #
 # Orbit Browser has its own version, VERSION in scripts/orbit_config.py; a tag
 # must be it (v0.1.0). Installed browsers update themselves from these releases
@@ -105,9 +106,11 @@ jobs:
   build:
     name: Build (${{ matrix.platform }})
     needs: [version, tests]
-    # The Chromium compile only runs on a self-hosted runner with the source
-    # checkout; it is too large for a hosted runner. Gated to tags and manual runs.
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Every push to main and every v* tag (and manual runs) builds. The Chromium
+    # compile only runs on a self-hosted runner with the source checkout; it is
+    # too large and slow for a hosted runner, so these runners must exist (labels
+    # below) or the jobs queue. Pull requests build nothing (tests only).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -167,7 +170,9 @@ jobs:
   release:
     name: Publish release
     needs: [version, build]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # A push to main publishes a prerelease (0.1.0-build.N); a v* tag publishes a
+    # release. The version job sets prerelease accordingly.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
