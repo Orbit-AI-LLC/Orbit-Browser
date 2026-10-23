@@ -1,7 +1,0 @@
-# Mac-only GN arguments (appended to common.gn by scripts/build.py).
-# One universal app for Apple silicon and Intel, as the other Orbit apps ship.
-target_os = "mac"
-is_universal_binary = true
-# Orbit Browser's own bundle id (keep in step with scripts/orbit_config.py and
-# the branding/BRANDING MAC_BUNDLE_ID). Chromium derives the helper apps' ids
-# from it.

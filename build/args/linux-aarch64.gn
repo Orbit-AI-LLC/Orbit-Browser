@@ -1,4 +1,0 @@
-# Linux aarch64 GN arguments (appended to common.gn by scripts/build.py).
-target_os = "linux"
-target_cpu = "arm64"
-use_sysroot = true

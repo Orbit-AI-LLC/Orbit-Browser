@@ -1,3 +1,0 @@
-# Windows on Arm GN arguments (appended to common.gn by scripts/build.py).
-target_os = "win"
-target_cpu = "arm64"
