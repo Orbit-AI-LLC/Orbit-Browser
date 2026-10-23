@@ -2,11 +2,18 @@
 .venv/
 node_modules/
 __pycache__/
-# Downloaded Firefox builds, unpacked trees and finished packages (scripts/build.py).
+# depot_tools and other downloads (scripts/sync.py).
 .cache/
-# Anchored: a bare work*/ also matches .github/workflows/.
-/work*/
+# The Chromium source checkout, synced to chromium.json (scripts/sync.py):
+# tens of GB, never committed. out/ (the build) lives under it.
+/src/
+# gclient's generated files.
+/.gclient
+/.gclient_entries
+/.gclient_previous_sync_commits
+# Finished packages (scripts/build.py).
 dist/
+/work*/
 
 # Claude Code session state and worktrees; only the shared settings are kept
 .claude/*

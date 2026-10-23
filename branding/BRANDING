@@ -1,0 +1,15 @@
+# Orbit Browser's branding, in Chromium's BRANDING format. scripts/build.py
+# copies this over src/chrome/app/theme/chromium/BRANDING (the branding an
+# un-Google-branded build uses, is_chrome_branded=false) before `gn gen`, so
+# the product names itself "Orbit Browser" throughout. Keep MAC_BUNDLE_ID in
+# step with scripts/orbit_config.py.
+COMPANY_FULLNAME=Orbit
+COMPANY_SHORTNAME=Orbit
+PRODUCT_FULLNAME=Orbit Browser
+PRODUCT_SHORTNAME=Orbit Browser
+PRODUCT_INSTALLER_FULLNAME=Orbit Browser Installer
+PRODUCT_INSTALLER_SHORTNAME=Orbit Browser Installer
+COPYRIGHT=Copyright @LASTCHANGE_YEAR@ Orbit. Built on Chromium; Chromium is Copyright The Chromium Authors.
+MAC_BUNDLE_ID=ai.com.orbit.browser
+MAC_CREATOR_CODE=OrbB
+MAC_TEAM_ID=

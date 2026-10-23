@@ -1,123 +1,65 @@
-"""Build Orbit Browser from Mozilla's Firefox release.
+"""Build Orbit Browser from the Chromium source.
 
-    python3 scripts/build.py                          # the host's default (Mac on a Mac, Linux on Linux, else Windows x64)
+    python3 scripts/build.py                           # the host's default (Mac on a Mac, Linux on Linux, else Windows x64)
     python3 scripts/build.py --platform win64 --platform win64-aarch64
     python3 scripts/build.py --platform linux --platform linux-aarch64
     python3 scripts/build.py --platform mac --sign "Developer ID Application: …"
+    python3 scripts/build.py --no-sync                 # reuse the source tree as it is (faster iteration)
 
-Downloads the release firefox.json pins (checking Mozilla's SHA-512), and
-makes Orbit Browser from it, in work/<platform>/ with the packages in dist/:
+Orbit Browser is a *source fork* of Chromium: this compiles Chromium with
+Orbit's changes, rather than repacking a downloaded binary. The steps:
 
-- the name and logo everywhere Firefox shows its own (branding/);
-- Mozilla's AI features off and locked (distribution/policies.json) and the
-  on-device inference libraries removed;
-- Orbit AI as the only chatbot, in the sidebar and the menus;
-- Orbit Pass built in, from the Orbit Pass checkout (--orbit-pass);
-- Firefox's updater removed (it would install Mozilla's Firefox over Orbit
-  Browser); OrbitBrowser.sys.mjs installs new Orbit Browsers instead.
+1. Fetch depot_tools and the Chromium source chromium.json pins (scripts/sync.py);
+2. Apply Orbit's branding (branding/), patches (patches/) and new files
+   (chromium_src/) onto a pristine tree (scripts/patches.py);
+3. `gn gen` with Orbit's GN arguments (build/args/) and `autoninja` the browser;
+4. Package per platform into dist/ (a .dmg + update payload on macOS, a
+   mini-installer + portable .zip on Windows, a .tar.xz on Linux).
 
-Orbit Browser has its own version (VERSION below), apart from the Firefox
-it is built on (firefox.json): 0.1.0 for a release, 0.1.0-build.N for a build
-on main, 0.1.0-local here.
+Orbit Browser has its own version (orbit_config.VERSION), apart from the
+Chromium it is built on (chromium.json): 0.1.0 for a release, 0.1.0-build.N for
+a build on main, 0.1.0-local here.
 
-Mac builds need macOS (hdiutil, codesign). Windows builds run anywhere with
-bsdtar (macOS's tar; libarchive-tools on Linux) and Node; the installer also
-needs makensis (NSIS). Linux builds run anywhere with tar and Node, and make a
-.tar.xz per architecture (x86_64 and aarch64).
+The compile is large: tens of GB of source and hours per platform, the heavy
+path a source fork takes in exchange for being able to change anything (the
+engine, the UI, the services), not only what a repack can reach. Chromium's own
+updater is not built; Orbit Browser updates itself from Orbit Mission Control
+(chromium_src/orbit/update/), as every other Orbit app does.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import plistlib
-import re
 import shutil
-import struct
 import subprocess
 import sys
 import tarfile
-import tempfile
 import zipfile
-import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from net import download  # noqa: E402
-import omni_patches  # noqa: E402
+import orbit_config as cfg  # noqa: E402
+import patches  # noqa: E402
+import sync  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-CACHE = ROOT / ".cache"
-WORK = ROOT / "work"
-DIST = ROOT / "dist"
 BRANDING = ROOT / "branding"
+DIST = ROOT / "dist"
+ARGS = ROOT / "build" / "args"
 PLATFORMS = ("mac", "win64", "win64-aarch64", "linux", "linux-aarch64")
-WINDOWS_ARCH = {"win64": "x64", "win64-aarch64": "arm64"}
-LINUX_ARCH = {"linux": "x86_64", "linux-aarch64": "aarch64"}
-
-APP_NAME = "Orbit Browser"
-#: Orbit Browser's own version, as people see it and Orbit Mission Control
-#: orders it; the Firefox it is built on is firefox.json's. Raise it for a
-#: release (a v<VERSION> tag); builds on main are newer by build number alone,
-#: so a new Firefox doesn't need one.
-VERSION = "0.1.0"
-BUNDLE_ID = "ai.com.orbit.browser"
-#: Orbit Pass's ID, and the moz-extension:// address it has in every copy of
-#: Orbit Browser (firefox-branding.js). Orbit Pass's server lists the same.
-ORBIT_PASS_ID = "pass@orbit.com.ai"
-ORBIT_PASS_UUID = "cabce947-8111-49e9-a61f-0224b07a4dfd"
-
-#: The Orbit apps: in the toolbar's Orbit menu (OrbitBrowser.sys.mjs) and on
-#: a new profile's bookmarks toolbar, in place of Mozilla's bookmarks. id is
-#: the mark (branding/content/apps/<id>.svg); open, where the menu opens it
-#: if not the address (Orbit Pass: its vault page, inside the browser).
-ORBIT_APPS = [
-    {"id": "ai", "name": "Orbit AI", "url": "https://ai.orbit.com.ai/"},
-    {"id": "mail", "name": "Orbit Mail", "url": "https://mail.orbit.com.ai/"},
-    {"id": "calendar", "name": "Orbit Calendar", "url": "https://mail.orbit.com.ai/calendar/"},
-    {"id": "chat", "name": "Orbit Chat", "url": "https://chat.orbit.com.ai/"},
-    {"id": "pass", "name": "Orbit Pass", "url": "https://pass.orbit.com.ai/vault/",
-     "open": f"moz-extension://{ORBIT_PASS_UUID}/src/vault/vault.html"},
-]
-
-#: Native code that only Mozilla's on-device AI uses: llama.cpp and the
-#: speech model (mozinference) and ONNX Runtime. Nothing loads them with the
-#: AI features off; Orbit Browser doesn't ship them at all.
-AI_LIBRARIES = {
-    "mac": ["Contents/MacOS/libmozinference.dylib", "Contents/MacOS/libonnxruntime.dylib"],
-    "windows": ["mozinference.dll", "onnxruntime.dll"],
-    "linux": ["libmozinference.so", "libonnxruntime.so"],
-}
-
-#: Firefox's updater and what serves it. Left in, it would replace Orbit
-#: Browser with Mozilla's Firefox at the next Firefox update.
-UPDATER = {
-    "mac": ["Contents/MacOS/updater.app", "Contents/Library/LaunchServices"],
-    "windows": [
-        "updater.exe",
-        "maintenanceservice.exe",
-        "maintenanceservice_installer.exe",
-        # Re-installs Mozilla's Firefox from a desktop shortcut.
-        "desktop-launcher",
-        # Firefox's scheduled task that nags about the default browser.
-        "default-browser-agent.exe",
-    ],
-    # Removed best-effort on Linux (remove_present): a release tarball's layout
-    # varies more than the Mac and Windows ones, and OrbitUpdates replaces the
-    # updater either way.
-    "linux": ["updater", "update-settings.ini"],
-}
-
-#: Entitlements of Mozilla's main executable that Orbit Browser can't keep:
-#: the application identifier names Mozilla's team, and passkeys through the
-#: system need a provisioning profile Apple grants per browser.
-DROPPED_ENTITLEMENTS = {
-    "com.apple.application-identifier",
-    "com.apple.developer.team-identifier",
-    "com.apple.developer.web-browser.public-key-credential",
+#: The out/ sub-directory per platform (one checkout, one output tree each).
+OUT_DIR = {p: f"Orbit-{p}" for p in PLATFORMS}
+#: How a platform names itself for Mission Control's update feed.
+UPDATE_TARGET = {
+    "mac": ("darwin", "universal", "mac"),
+    "win64": ("windows", "x86_64", "windows"),
+    "win64-aarch64": ("windows", "aarch64", "windows"),
+    "linux": ("linux", "x86_64", "linux"),
+    "linux-aarch64": ("linux", "aarch64", "linux"),
 }
 
 
@@ -126,741 +68,274 @@ def log(message: str) -> None:
 
 
 def run(*args, **kwargs) -> subprocess.CompletedProcess:
+    kwargs.setdefault("env", sync.depot_tools_env())
     return subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
-# -- versions -------------------------------------------------------------------------
+# -- Orbit's changes onto the tree --------------------------------------------------------
 
 
-def firefox_pin() -> dict:
-    return json.loads((ROOT / "firefox.json").read_text())
+def apply_branding(src: Path, version: str, build: int) -> None:
+    """Orbit's identity into the Chromium tree: the BRANDING file, the product
+    icons, and the generated defaults the Orbit component reads (version, apps,
+    update feed). Done before patches so a patch can refer to generated files."""
+    theme = src / "chrome" / "app" / "theme" / "chromium"
+    shutil.copyfile(BRANDING / "BRANDING", theme / "BRANDING")
+
+    # Product icons, over Chromium's: the app icon per platform and the PNG
+    # product logos the UI shows. branding/ holds Orbit's (scripts/build_icon.py).
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        source = BRANDING / "content" / f"icon{size}.png"
+        if source.exists():
+            shutil.copyfile(source, theme / f"product_logo_{size}.png")
+    _copy_if(BRANDING / "mac" / "app.icns", theme / "app.icns")
+    _copy_if(BRANDING / "mac" / "document.icns", theme / "document.icns")
+    _copy_if(BRANDING / "windows" / "app.ico", src / "chrome" / "app" / "chrome_exe.ico")
+
+    # The generated header the Orbit component is built from, so the C++ and
+    # scripts/orbit_config.py never disagree. chromium_src/orbit/ #includes it.
+    generated = src / "chrome" / "browser" / "orbit" / "orbit_generated.h"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text(_orbit_header(version, build))
 
 
-def orbit_version(build: int, release: bool, base: str = VERSION) -> str:
-    """Orbit Browser's version for this build: VERSION for a release,
-    VERSION-build.N for a build on main, VERSION-local for one made here."""
-    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", base):
-        raise SystemExit(f"VERSION {base!r} isn't a version of three numbers.")
-    if release:
-        return base
-    return f"{base}-build.{build}" if build else f"{base}-local"
-
-
-# -- fetching Firefox -------------------------------------------------------------------
-
-
-def fetch_firefox(platform: str) -> Path:
-    pin = firefox_pin()
-    build = pin["builds"][platform]
-    target = CACHE / "firefox" / pin["version"] / build["path"].replace("/", "_")
-    if not target.exists() or sha512(target) != build["sha512"]:
-        log(f"Downloading Firefox {pin['version']} ({platform})")
-        download(pin["archive"] + build["path"].replace(" ", "%20"), target)
-    digest = sha512(target)
-    if digest != build["sha512"]:
-        target.unlink()
-        raise SystemExit(f"{build['path']}: SHA-512 {digest} is not the one Mozilla lists. Download deleted.")
-    return target
-
-
-def sha512(path: Path) -> str:
-    h = hashlib.sha512()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-# -- omni.ja --------------------------------------------------------------------------
-
-
-class Jar:
-    """An omni.ja, read whole, changed in memory and written back as a zip
-    Firefox reads (deflated entries, no data descriptors)."""
-
-    def __init__(self, path: Path):
-        self.path = path
-        self.entries = read_jar(path)
-
-    def text(self, name: str) -> str:
-        return self.entries[name].decode("utf-8")
-
-    def replace(self, name: str, data: bytes | str) -> None:
-        if name not in self.entries:
-            raise SystemExit(f"{self.path.name} has no {name} to replace; has Firefox moved it?")
-        self.entries[name] = data.encode("utf-8") if isinstance(data, str) else data
-
-    def add(self, name: str, data: bytes | str) -> None:
-        if name in self.entries:
-            raise SystemExit(f"{self.path.name} already has {name}.")
-        self.entries[name] = data.encode("utf-8") if isinstance(data, str) else data
-
-    def put(self, name: str, data: bytes | str) -> None:
-        self.entries[name] = data.encode("utf-8") if isinstance(data, str) else data
-
-    def save(self) -> None:
-        partial = self.path.with_suffix(".ja.part")
-        with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-            for name, data in self.entries.items():
-                info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.external_attr = 0o644 << 16
-                z.writestr(info, data)
-        partial.replace(self.path)
-
-
-def read_jar(path: Path) -> dict[str, bytes]:
-    """The files in an omni.ja. Mozilla writes them "optimized": a 4-byte
-    header, then the central directory, then the files, which Python's
-    zipfile can't follow, so this reads it the way Firefox does, from the end
-    of central directory record."""
-    data = path.read_bytes()
-    end = data.rfind(b"PK\x05\x06")
-    if end < 0:
-        raise SystemExit(f"{path} is not a zip.")
-    count, _, offset = struct.unpack("<HII", data[end + 10:end + 20])
-    entries = {}
-    for _ in range(count):
-        if data[offset:offset + 4] != b"PK\x01\x02":
-            raise SystemExit(f"{path}: damaged central directory.")
-        method, = struct.unpack("<H", data[offset + 10:offset + 12])
-        crc, size = struct.unpack("<II", data[offset + 16:offset + 24])
-        name_len, extra_len, comment_len = struct.unpack("<HHH", data[offset + 28:offset + 34])
-        local, = struct.unpack("<I", data[offset + 42:offset + 46])
-        name = data[offset + 46:offset + 46 + name_len].decode("utf-8")
-        offset += 46 + name_len + extra_len + comment_len
-        if data[local:local + 4] != b"PK\x03\x04":
-            raise SystemExit(f"{path}: {name} has no local header.")
-        local_name, local_extra = struct.unpack("<HH", data[local + 26:local + 30])
-        start = local + 30 + local_name + local_extra
-        raw = data[start:start + size]
-        if method == 0:
-            content = raw
-        elif method == 8:
-            content = zlib.decompress(raw, -15)
-        else:
-            raise SystemExit(f"{path}: {name} uses compression method {method}.")
-        if zlib.crc32(content) != crc:
-            raise SystemExit(f"{path}: {name} fails its checksum.")
-        if not name.endswith("/"):
-            entries[name] = content
-    return entries
-
-
-def read_jars(platform: str = "win64") -> dict[str, dict[str, bytes]]:
-    """browser/omni.ja and omni.ja of the pinned Firefox, read out for checking
-    the patches against it (tests, scripts/update_firefox.py). The Windows
-    build unpacks on any OS; the Mac build needs a Mac. This is not the build
-    path -- build_mac / build_windows read the unpacked app in place."""
-    if platform == "mac":
-        dmg = fetch_firefox("mac")
-        with tempfile.TemporaryDirectory() as mount:
-            run("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg, stdout=subprocess.DEVNULL)
-            try:
-                res = Path(mount) / "Firefox.app" / "Contents" / "Resources"
-                return {"browser": read_jar(res / "browser" / "omni.ja"), "gre": read_jar(res / "omni.ja")}
-            finally:
-                run("hdiutil", "detach", mount, "-quiet")
-    installer = fetch_firefox(platform)
-    data = installer.read_bytes()
-    with tempfile.TemporaryDirectory() as tmp:
-        archive = Path(tmp) / "payload.7z"
-        archive.write_bytes(data[data.find(b"7z\xbc\xaf\x27\x1c"):])
-        run(bsdtar(), "-xf", archive, "-C", tmp, "core/omni.ja", "core/browser/omni.ja")
-        return {"browser": read_jar(Path(tmp) / "core" / "browser" / "omni.ja"), "gre": read_jar(Path(tmp) / "core" / "omni.ja")}
-
-
-def orbit_pass_files(checkout: Path) -> dict[str, bytes]:
-    """Orbit Pass's Firefox package, made by its own packager, as the files
-    of a built-in add-on: privileged, so its host permissions are granted at
-    install, and versioned by its contents so a changed Orbit Pass replaces
-    the one a profile already has."""
-    packager = checkout / "extension" / "scripts" / "package.mjs"
-    if not packager.exists():
-        raise SystemExit(f"No Orbit Pass at {checkout} (expected extension/scripts/package.mjs). Pass --orbit-pass.")
-    with tempfile.TemporaryDirectory() as tmp:
-        package = Path(tmp) / "orbit-pass-firefox.zip"
-        run("node", packager, "--firefox", package, stdout=subprocess.DEVNULL)
-        with zipfile.ZipFile(package) as z:
-            files = {i.filename: z.read(i) for i in z.infolist() if not i.is_dir()}
-    manifest = json.loads(files["manifest.json"])
-    gecko_id = manifest.get("browser_specific_settings", {}).get("gecko", {}).get("id")
-    if gecko_id != ORBIT_PASS_ID:
-        raise SystemExit(f"Orbit Pass's Firefox package has the ID {gecko_id!r}, not {ORBIT_PASS_ID}.")
-    content = zlib.crc32(b"".join(name.encode() + files[name] for name in sorted(files)))
-    manifest["version"] = f"{manifest['version']}.{content % 100_000_000}"
-    manifest["granted_host_permissions"] = True
-    files["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
-    return files
-
-
-def customize_omni(resources: Path, *, platform: str, version: str, build: int, orbit_pass: dict[str, bytes]) -> str:
-    """Make browser/omni.ja and omni.ja Orbit Browser's. Returns the build's stamp."""
-    browser = Jar(resources / "browser" / "omni.ja")
-    gre = Jar(resources / "omni.ja")
-
-    # The changes to Mozilla's own files: the .patch files under patches/, then
-    # the generated edits and appends (scripts/omni_patches.py). Each raises if
-    # it no longer fits this Firefox, naming the file.
-    try:
-        omni_patches.apply_all({"browser": browser, "gre": gre}, platform)
-    except omni_patches.PatchError as error:
-        raise SystemExit(str(error))
-
-    branding = "chrome/browser/content/branding/"
-    for source in sorted((BRANDING / "content").rglob("*")):
-        if source.is_file():
-            browser.put(branding + source.relative_to(BRANDING / "content").as_posix(), source.read_bytes())
-    browser.replace("localization/en-US/branding/brand.ftl", (BRANDING / "locales" / "brand.ftl").read_bytes())
-    browser.replace("chrome/en-US/locale/branding/brand.properties", (BRANDING / "locales" / "brand.properties").read_bytes())
-    browser.replace("chrome/browser/skin/classic/browser/sidebar/firefox.svg", (BRANDING / "skin" / "sidebar-firefox.svg").read_bytes())
-    browser.add("chrome/browser/skin/classic/browser/orbit-button.svg", (BRANDING / "skin" / "orbit-button.svg").read_bytes())
-    browser.add("chrome/browser/content/browser/orbit-browser.css", (ROOT / "browser" / "content" / "orbit-browser.css").read_bytes())
-    browser.replace("chrome/browser/content/browser/default-bookmarks.html", orbit_default_bookmarks())
-
-    addon_root = "chrome/browser/builtin-addons/orbit-pass/"
-    for name, data in orbit_pass.items():
-        browser.add(addon_root + name, data)
-    pass_version = json.loads(orbit_pass["manifest.json"])["version"]
-    builtins = [{"id": ORBIT_PASS_ID, "version": pass_version, "url": "resource://builtin-addons/orbit-pass/"}]
-    module = (ROOT / "browser" / "modules" / "OrbitBrowser.sys.mjs").read_text()
-    module = module.replace("/* @BUILTIN_ADDONS@ */ []", json.dumps(builtins), 1)
-    module = module.replace("/* @ORBIT_APPS@ */ []", json.dumps(ORBIT_APPS), 1)
-    if "@BUILTIN_ADDONS@" in module or "@ORBIT_APPS@" in module:
-        raise SystemExit("OrbitBrowser.sys.mjs has a placeholder the build doesn't fill.")
-    browser.add("modules/OrbitBrowser.sys.mjs", module)
-    # Its updates (as the other Orbit apps get them) and their signature check.
-    for name in ("OrbitUpdates.sys.mjs", "OrbitSignature.sys.mjs"):
-        browser.add(f"modules/{name}", (ROOT / "browser" / "modules" / name).read_bytes())
-
-    # The stamp covers everything this build put in, so it changes exactly
-    # when Orbit Browser's own files do (OrbitBrowser.dropCachesFromOtherBuilds).
-    h = hashlib.sha256(f"{version}/{build}".encode())
-    for jar in (browser, gre):
-        for name in sorted(jar.entries):
-            h.update(name.encode() + b"\0" + jar.entries[name])
-    stamp = h.hexdigest()[:16]
-    prefs = (BRANDING / "firefox-branding.js").read_text()
-    for key, value in {
-        "@ORBIT_VERSION@": version,
-        "@ORBIT_BUILD@": str(build),
-        "@ORBIT_STAMP@": stamp,
-        "@ORBIT_PASS_UUID@": ORBIT_PASS_UUID,
-    }.items():
-        prefs = prefs.replace(key, value)
-    if re.search(r"@[A-Z_]+@", prefs):
-        raise SystemExit("firefox-branding.js has a placeholder the build doesn't fill.")
-    browser.replace("defaults/preferences/firefox-branding.js", prefs)
-
-    browser.save()
-    gre.save()
-    return stamp
-
-
-def orbit_default_bookmarks() -> str:
-    """A new profile's bookmarks, in place of Firefox's "Mozilla Firefox"
-    folder: the Orbit apps on the bookmarks toolbar, each with its mark."""
-    import base64
-    from html import escape
-
-    rows = []
-    for app in ORBIT_APPS:
-        icon = base64.b64encode((BRANDING / "content" / "apps" / f"{app['id']}-32.png").read_bytes()).decode()
-        rows.append(f'            <dt><a href="{escape(app["url"])}" icon="data:image/png;base64,{icon}">{escape(app["name"])}</a></dt>')
-    return "\n".join([
-        "<!-- This Source Code Form is subject to the terms of the Mozilla Public",
-        "   - License, v. 2.0. If a copy of the MPL was not distributed with this",
-        "   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->",
-        "<!-- Orbit Browser's default bookmarks, written by scripts/build.py. -->",
-        "<!DOCTYPE NETSCAPE-Bookmark-file-1>",
-        "<html>",
-        "<head>",
-        '    <meta charset="UTF-8">',
-        "    <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none';\">",
-        "    <title>Bookmarks</title>",
-        "</head>",
-        "<body>",
-        "<h1>Bookmarks</h1>",
-        "<dl><p>",
-        '    <dt><h3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks Toolbar</h3></dt>',
-        "        <dl><p>",
-        *rows,
-        "        </dl><p>",
-        "</dl>",
-        "</body>",
-        "</html>",
-        "",
-    ])
-
-
-def write_policies(distribution: Path, platform: str) -> None:
-    policies = json.loads((ROOT / "distribution" / "policies.json").read_text())
-    if platform.startswith("win"):
-        # Firefox's own way of becoming the default browser on Windows
-        # registers it under Firefox's name; the installer registers Orbit
-        # Browser, and Windows' Default apps settings choose it. These keys are
-        # Windows-only, so Mac and Linux don't get them.
-        policies["policies"].update({
-            "DisableDefaultBrowserAgent": True,
-            "DefaultBrowserSettingEnabled": False,
-            "DontCheckDefaultBrowser": True,
-        })
-    distribution.mkdir(parents=True, exist_ok=True)
-    (distribution / "policies.json").write_text(json.dumps(policies, indent=2) + "\n")
-
-
-def remove_ai_libraries(base: Path, platform: str) -> None:
-    """The on-device AI libraries this build of Firefox has (not every one
-    has each: Windows on Arm has no ONNX Runtime), and then a check that
-    nothing else by those names is left."""
-    found = [name for name in AI_LIBRARIES[platform] if (base / name).exists()]
-    if found:
-        remove(base, found)
-    elif platform == "linux":
-        # The Linux release may not ship the on-device AI libraries at all;
-        # that is fine, there is nothing to remove. The sweep below still runs,
-        # so one that appears under a new name is still caught.
-        log("No on-device AI libraries in this Linux build; nothing to remove.")
-    else:
-        raise SystemExit("None of Firefox's AI libraries are where they were; have they moved? (scripts/build.py)")
-    folder = (base / AI_LIBRARIES[platform][0]).parent
-    left = [p.name for p in folder.iterdir() if re.search(r"inference|onnx", p.name, re.I)]
-    if left:
-        raise SystemExit(f"Firefox has AI libraries the build doesn't know: {left} (scripts/build.py, AI_LIBRARIES)")
-
-
-def remove_present(base: Path, relative: list[str]) -> None:
-    """Remove each path that is there, and quietly skip one that is not. For the
-    Linux build, whose release tarball's exact file set varies more than the Mac
-    and Windows builds'."""
-    for name in relative:
-        target = base / name
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-
-
-def remove(base: Path, relative: list[str]) -> None:
-    for name in relative:
-        target = base / name
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-        else:
-            raise SystemExit(f"Expected {name} in Firefox; has it moved? (scripts/build.py)")
-
-
-# -- the Mac app ------------------------------------------------------------------------
-
-
-def build_mac(args, version: str, orbit_pass: dict[str, bytes]) -> list[Path]:
-    dmg = fetch_firefox("mac")
-    work = args.work / "mac"
-    app = work / f"{APP_NAME}.app"
-    refuse_if_running(app)
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
-    log("Unpacking Firefox.app")
-    with tempfile.TemporaryDirectory() as mount:
-        run("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg, stdout=subprocess.DEVNULL)
-        try:
-            run("ditto", Path(mount) / "Firefox.app", app)
-        finally:
-            run("hdiutil", "detach", mount, "-quiet")
-    contents = app / "Contents"
-    resources = contents / "Resources"
-    entitlements = mozilla_entitlements(app)
-
-    log("Rebranding and changing omni.ja")
-    stamp = customize_omni(resources, platform="mac", version=version, build=args.build, orbit_pass=orbit_pass)
-    write_policies(resources / "distribution", "mac")
-    # Firefox's own icon for macOS 26 (Assets.car) and Mozilla's provisioning
-    # profile (it names Mozilla's team) go too.
-    remove_ai_libraries(app, "mac")
-    remove(app, UPDATER["mac"] + ["Contents/Resources/Assets.car", "Contents/embedded.provisionprofile"])
-    shutil.copyfile(BRANDING / "mac" / "firefox.icns", resources / "firefox.icns")
-    shutil.copyfile(BRANDING / "mac" / "document.icns", resources / "document.icns")
-    (resources / "browser" / "application.ini").write_text(orbit_application_ini((resources / "application.ini").read_text()))
-    build_launcher(contents / "MacOS" / LAUNCHER)
-    rename_mac_bundle(contents, version)
-
-    log("Signing")
-    sign_mac(app, entitlements, args.sign)
-    register_mac_app(app)
-    log("Making the disk image")
-    DIST.mkdir(exist_ok=True)
-    out = DIST / f"Orbit-Browser-{version}-macOS.dmg"
-    with tempfile.TemporaryDirectory() as tmp:
-        stage = Path(tmp) / APP_NAME
-        stage.mkdir()
-        run("ditto", app, stage / app.name)
-        (stage / "Applications").symlink_to("/Applications")
-        if out.exists():
-            out.unlink()
-        run("hdiutil", "create", "-quiet", "-volname", APP_NAME, "-srcfolder", stage, "-format", "ULMO", "-fs", "HFS+", out)
-    if args.sign:
-        run("codesign", "--force", "--timestamp", "--sign", args.sign, out)
-    # The update payload: the app alone, which an installed Orbit Browser
-    # unpacks and puts in its own place (OrbitBrowser.sys.mjs), as the Tauri
-    # apps' .app.tar.gz. No AppleDouble (._) files: the app's signature covers
-    # everything in it.
-    payload = DIST / f"Orbit-Browser-{version}-macOS.app.tar.gz"
-    run("tar", "--no-mac-metadata", "-czf", payload, "-C", work, app.name)
-    print(f"stamp {stamp}")
-    return [out, payload]
-
-
-#: The Mac app's executable, browser/launcher/orbit-browser.c: it starts the
-#: engine (Contents/MacOS/firefox) with Orbit Browser's application.ini.
-LAUNCHER = "orbit-browser"
-
-
-def orbit_application_ini(firefox_ini: str) -> str:
-    """The engine's application data, as Firefox's build wrote it, with Orbit
-    Browser's own folders (~/Library/Application Support/Orbit Browser and
-    ~/Library/Caches/Orbit Browser): Profile names them, while Name stays
-    "Firefox", which the user agent and add-ons go by. Crash reports don't go
-    to Mozilla, whose build this no longer is."""
-    import configparser
-
-    ini = configparser.ConfigParser(interpolation=None)
-    ini.optionxform = str
-    ini.read_string(firefox_ini)
-    app = dict(ini["App"])
-    app["RemotingName"] = "orbit-browser"
-    app["Profile"] = APP_NAME
-    out = ["; Orbit Browser's application data, written by scripts/build.py from Firefox's.", "; The launcher (Contents/MacOS/orbit-browser) hands it to the engine.", "[App]"]
-    out += [f"{key}={value}" for key, value in app.items()]
-    for section in ("Gecko", "XRE"):
-        out += ["", f"[{section}]"] + [f"{key}={value}" for key, value in ini[section].items()]
-    out += ["", "[Crash Reporter]", "Enabled=0", ""]
-    return "\n".join(out)
-
-
-def build_launcher(target: Path) -> None:
-    run(
-        "clang", "-O2", "-Wall", "-Werror", "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=10.15",
-        "-o", target, ROOT / "browser" / "launcher" / "orbit-browser.c",
+def _orbit_header(version: str, build: int) -> str:
+    data = cfg.as_dict()
+    data["build"] = build
+    data["display_version"] = version
+    blob = json.dumps(data, indent=2).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n\"\n\"")
+    return (
+        "// Generated by scripts/build.py from scripts/orbit_config.py. Do not edit.\n"
+        "#ifndef CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n"
+        "#define CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n\n"
+        f'#define ORBIT_VERSION "{version}"\n'
+        f"#define ORBIT_BUILD {build}\n"
+        f'#define ORBIT_CONFIG_JSON "{blob}"\n\n'
+        "#endif  // CHROME_BROWSER_ORBIT_ORBIT_GENERATED_H_\n"
     )
 
 
-def register_mac_app(app: Path) -> None:
-    """Date the app now and tell Launch Services about it. ditto keeps the
-    dates of Mozilla's Firefox.app, and macOS keeps an app's icon (in the
-    Dock, as it launches) for as long as its date says it hasn't changed: a
-    rebuilt Orbit Browser would show whatever icon macOS first saw there."""
-    for path in (app, app / "Contents", app / "Contents" / "Info.plist", app / "Contents" / "Resources" / "firefox.icns"):
-        os.utime(path)
-    lsregister = Path("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
-    if lsregister.exists():
-        subprocess.run([str(lsregister), "-f", str(app)], check=False)
+def _copy_if(source: Path, target: Path) -> None:
+    if source.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
 
 
-def refuse_if_running(app: Path) -> None:
-    """Replacing an app while it runs pulls its files from under it."""
-    running = subprocess.run(["pgrep", "-f", str(app / "Contents" / "MacOS")], capture_output=True, text=True).stdout.split()
-    if running:
-        raise SystemExit(f"{app} is running. Quit it first, or build elsewhere with --work.")
+def platform_os(platform: str) -> str:
+    return "mac" if platform == "mac" else "win" if platform.startswith("win") else "linux"
 
 
-def mozilla_entitlements(app: Path) -> dict:
-    out = subprocess.run(["codesign", "-d", "--entitlements", "-", "--xml", str(app)], capture_output=True, check=True).stdout
-    entitlements = plistlib.loads(out) if out.strip() else {}
-    return {k: v for k, v in entitlements.items() if k not in DROPPED_ENTITLEMENTS}
+def stage_distribution(dest: Path) -> None:
+    """The first-run defaults into a packaged tree. The locked policy
+    (distribution/policies/) is placed by the installers at each platform's
+    managed-policy location (distribution/README.md), not inside the app."""
+    prefs = (ROOT / "distribution" / "initial_preferences").read_text()
+    (dest / "initial_preferences").write_text(prefs)
 
 
-def rename_mac_bundle(contents: Path, version: str) -> None:
-    info_path = contents / "Info.plist"
-    info = plistlib.loads(info_path.read_bytes())
-    info.update({
-        "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME,
-        "CFBundleIdentifier": BUNDLE_ID,
-        "CFBundleGetInfoString": f"{APP_NAME} {version}",
-        # Orbit Browser's version (Finder's Get Info); CFBundleVersion stays
-        # Firefox's build, the engine's.
-        "CFBundleShortVersionString": version,
-        "CFBundleExecutable": LAUNCHER,
-    })
-    # Firefox's icon on macOS 26 lives in Assets.car (removed); the .icns is Orbit's.
-    info.pop("CFBundleIconName", None)
-    # Mozilla's privileged updater helpers, removed with the updater.
-    info.pop("SMPrivilegedExecutables", None)
-    for key, value in list(info.items()):
-        if key.endswith("UsageDescription") and isinstance(value, str):
-            info[key] = value.replace("Firefox", APP_NAME)
-    info_path.write_bytes(plistlib.dumps(info))
-    for strings in contents.glob("Resources/*.lproj/InfoPlist.strings"):
-        raw = strings.read_bytes()
-        encoding = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
-        text = raw.decode(encoding)
-        text = re.sub(r'CFBundleName = "[^"]*";', f'CFBundleName = "{APP_NAME}";', text)
-        strings.write_bytes(text.encode(encoding))
+def write_gn_args(src: Path, platform: str) -> Path:
+    out = src / "out" / OUT_DIR[platform]
+    out.mkdir(parents=True, exist_ok=True)
+    common = (ARGS / "common.gn").read_text()
+    per = (ARGS / f"{platform}.gn").read_text()
+    (out / "args.gn").write_text(common + "\n" + per)
+    log(f"gn gen out/{OUT_DIR[platform]}")
+    run("gn", "gen", f"out/{OUT_DIR[platform]}", cwd=src)
+    return out
 
 
-def sign_mac(app: Path, entitlements: dict, identity: str | None, *, everything: bool | None = None) -> None:
-    """Sign the engine (Contents/MacOS/firefox: the launcher becomes it, so it
-    carries the entitlements, less the ones only Mozilla can hold) and the
-    app itself again (its executable, Info.plist and resources changed).
-
-    Ad hoc (no identity), Mozilla's own signatures on XUL, the libraries and
-    the helper apps stay as they are. With a Developer ID (or everything=True)
-    all the code inside is signed again, innermost first, each helper app
-    keeping its own entitlements: notarization only accepts an app whose code
-    is all the team's."""
-    def sign(path: Path, ents: dict | None = None, *extra: str) -> None:
-        args = ["codesign", "--force", "--sign", identity or "-", "--options", "runtime"]
-        if identity:
-            args.append("--timestamp")
-        with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as f:
-            f.write(plistlib.dumps(ents or {}))
-        try:
-            run(*args, *(["--entitlements", f.name] if ents else []), *extra, path)
-        finally:
-            os.unlink(f.name)
-
-    contents = app / "Contents"
-    if identity if everything is None else everything:
-        helpers = list(contents.rglob("*.app"))
-        for path in sorted(contents.rglob("*")):
-            if (path.is_file() and not path.is_symlink() and path.name not in ("firefox", LAUNCHER)
-                    and not any(helper in path.parents for helper in helpers) and is_macho(path)):
-                sign(path)
-        for helper in sorted(helpers, key=lambda p: -len(p.parts)):
-            sign(helper, mozilla_entitlements(helper))
-    sign(contents / "MacOS" / "firefox", entitlements, "--identifier", f"{BUNDLE_ID}.engine")
-    sign(app, entitlements)
-    run("codesign", "--verify", "--strict", "--deep", app)
+def autoninja(src: Path, platform: str, targets: list[str], jobs: int | None) -> None:
+    args = ["autoninja", "-C", f"out/{OUT_DIR[platform]}"]
+    if jobs:
+        args += ["-j", str(jobs)]
+    log(f"autoninja {' '.join(targets)} ({platform})")
+    run(*args, *targets, cwd=src)
 
 
-def is_macho(path: Path) -> bool:
-    with path.open("rb") as f:
-        magic = f.read(4)
-    return magic in (b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")
+# -- Orbit Pass (built in) ----------------------------------------------------------------
 
 
-# -- Windows ------------------------------------------------------------------------------
+def build_orbit_pass(checkout: Path, out: Path) -> dict:
+    """Orbit Pass's Chromium (MV3) package, made by its own packager, staged as
+    a pre-installed external extension. Returns {id, path, version}. Orbit Pass
+    is force-installed and un-removable by policy (distribution/)."""
+    packager = checkout / "extension" / "scripts" / "package.mjs"
+    if not packager.exists():
+        raise SystemExit(f"No Orbit Pass at {checkout} (expected extension/scripts/package.mjs). Pass --orbit-pass.")
+    out.mkdir(parents=True, exist_ok=True)
+    crx = out / "orbit-pass.crx"
+    run("node", str(packager), "--chrome", "--crx", str(crx), env=dict(os.environ))
+    # The packager prints the id it signed; trust orbit_config and verify.
+    return {"id": cfg.ORBIT_PASS_ID, "path": crx, "version": _crx_version(checkout)}
 
 
-def build_windows(args, platform: str, version: str, orbit_pass: dict[str, bytes]) -> list[Path]:
-    installer = fetch_firefox(platform)
-    arch = WINDOWS_ARCH[platform]
-    work = args.work / platform
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
-    log(f"Unpacking Firefox for Windows ({arch})")
-    # The installer is 7-Zip's self-extractor in front of a 7z archive.
-    data = installer.read_bytes()
-    start = data.find(b"7z\xbc\xaf\x27\x1c")
-    if start < 0:
-        raise SystemExit(f"{installer.name} doesn't hold a 7z archive.")
-    archive = work / "payload.7z"
-    archive.write_bytes(data[start:])
-    run(bsdtar(), "-xf", archive, "-C", work, "core")
-    archive.unlink()
-    app = work / APP_NAME
-    (work / "core").rename(app)
+def _crx_version(checkout: Path) -> str:
+    manifest = json.loads((checkout / "extension" / "manifest.json").read_text())
+    return manifest.get("version", "0")
 
-    log("Rebranding and changing omni.ja")
-    stamp = customize_omni(app, platform="windows", version=version, build=args.build, orbit_pass=orbit_pass)
-    write_policies(app / "distribution", platform)
-    remove_ai_libraries(app, "windows")
-    remove(app, UPDATER["windows"])
-    windows = BRANDING / "windows"
-    for name in ("VisualElements_150.png", "VisualElements_70.png", "PrivateBrowsing_150.png", "PrivateBrowsing_70.png"):
-        shutil.copyfile(windows / name, app / "browser" / "VisualElements" / name)
-    tile_colour = (windows / "tile-colour.txt").read_text().strip()
-    for manifest, colour, text in (("firefox", tile_colour, "light"), ("private_browsing", "#16181d", "light")):
-        path = app / f"{manifest}.VisualElementsManifest.xml"
-        xml = path.read_text()
-        xml = re.sub(r"BackgroundColor='[^']*'", f"BackgroundColor='{colour}'", xml)
-        xml = re.sub(r"ForegroundText='[^']*'", f"ForegroundText='{text}'", xml)
-        path.write_text(xml)
 
-    log("Icons and details of the executables")
-    run("node", ROOT / "scripts" / "win_resources.mjs", app, version, cwd=ROOT)
+# -- packaging ----------------------------------------------------------------------------
+
+
+def build_mac(args, version: str) -> list[Path]:
+    if sys.platform != "darwin":
+        raise SystemExit("The Mac app is built on macOS.")
+    src = args.src
+    out = write_gn_args(src, "mac")
+    autoninja(src, "mac", ["chrome", "chrome/installer/mac"], args.jobs)
+    app = out / f"{cfg.APP_NAME}.app"
+    built = out / "Chromium.app"
+    if not built.exists():
+        raise SystemExit(f"Build produced no {built}; check the autoninja output.")
+    if app.exists():
+        shutil.rmtree(app)
+    shutil.copytree(built, app, symlinks=True)
+    _mac_bundle_version(app, version)
+    stage_distribution(app / "Contents" / "Resources")
+    if args.sign:
+        log("Signing")
+        run("codesign", "--force", "--deep", "--timestamp", "--options", "runtime",
+            "--sign", args.sign, app, env=dict(os.environ))
+        run("codesign", "--verify", "--strict", "--deep", app, env=dict(os.environ))
 
     DIST.mkdir(exist_ok=True)
+    dmg = DIST / f"Orbit-Browser-{version}-macOS.dmg"
+    _mac_dmg(app, dmg, args.sign)
+    payload = DIST / f"Orbit-Browser-{version}-macOS.app.tar.gz"
+    run("tar", "--no-mac-metadata", "-czf", payload, "-C", out, app.name, env=dict(os.environ))
+    return [dmg, payload]
+
+
+def _mac_bundle_version(app: Path, version: str) -> None:
+    info = app / "Contents" / "Info.plist"
+    plist = plistlib.loads(info.read_bytes())
+    plist["CFBundleShortVersionString"] = version
+    plist["CFBundleIdentifier"] = cfg.MAC_BUNDLE_ID
+    info.write_bytes(plistlib.dumps(plist))
+
+
+def _mac_dmg(app: Path, dmg: Path, sign: str | None) -> None:
+    import tempfile
+    log("Making the disk image")
+    with tempfile.TemporaryDirectory() as tmp:
+        stage = Path(tmp) / cfg.APP_NAME
+        stage.mkdir()
+        run("ditto", app, stage / app.name, env=dict(os.environ))
+        (stage / "Applications").symlink_to("/Applications")
+        if dmg.exists():
+            dmg.unlink()
+        run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage,
+            "-format", "ULMO", "-fs", "HFS+", dmg, env=dict(os.environ))
+    if sign:
+        run("codesign", "--force", "--timestamp", "--sign", sign, dmg, env=dict(os.environ))
+
+
+def build_windows(args, platform: str, version: str) -> list[Path]:
+    src = args.src
+    out = write_gn_args(src, platform)
+    autoninja(src, platform, ["chrome", "mini_installer"], args.jobs)
+    arch = "x64" if platform == "win64" else "arm64"
+    DIST.mkdir(exist_ok=True)
     outputs = []
-    portable = DIST / f"Orbit-Browser-{version}-Windows-{arch}.zip"
-    if portable.exists():
-        portable.unlink()
-    with zipfile.ZipFile(portable, "w", zipfile.ZIP_DEFLATED) as z:
-        for path in sorted(app.rglob("*")):
-            if path.is_file():
-                z.write(path, Path(APP_NAME) / path.relative_to(app))
-    outputs.append(portable)
-    makensis = shutil.which("makensis")
-    if makensis:
-        log("Making the installer")
+    installer = out / "mini_installer.exe"
+    if installer.exists():
         setup = DIST / f"Orbit-Browser-{version}-Windows-{arch}-Setup.exe"
-        run(
-            makensis, "-V2", "-INPUTCHARSET", "UTF8",
-            f"-DVERSION={version}", f"-DARCH={arch}", f"-DSOURCE={app}", f"-DOUTFILE={setup}",
-            f"-DICON={windows / 'firefox.ico'}",
-            "-DFILEVERSION=" + ".".join((re.findall(r"\d+", version.split("-")[0]) + ["0"] * 4)[:3] + [str(args.build)]),
-            ROOT / "installer" / "windows" / "OrbitBrowser.nsi",
-        )
+        shutil.copyfile(installer, setup)
         outputs.append(setup)
-    else:
-        print("makensis not found: made the zip only (install NSIS for the installer).")
-    print(f"stamp {stamp}")
+    # A portable zip of the install image (the files mini_installer packs).
+    stage_distribution(out)
+    portable = DIST / f"Orbit-Browser-{version}-Windows-{arch}.zip"
+    _zip_install_image(out, portable)
+    outputs.append(portable)
     return outputs
 
 
-# -- Linux --------------------------------------------------------------------------------
+def _zip_install_image(out: Path, portable: Path) -> None:
+    """The browser's own files from the output tree (not the whole out/, which
+    holds build intermediates): everything the installer ships."""
+    names = ["chrome.exe", "chrome_proxy.exe", "chrome_elf.dll", "*.dll", "*.pak",
+             "*.bin", "icudtl.dat", "resources.pak", "v8_context_snapshot.bin",
+             "initial_preferences", "locales", "Orbit Browser"]
+    if portable.exists():
+        portable.unlink()
+    with zipfile.ZipFile(portable, "w", zipfile.ZIP_DEFLATED) as z:
+        for pattern in names:
+            for path in sorted(out.glob(pattern)):
+                if path.is_file():
+                    z.write(path, Path(cfg.APP_NAME) / path.name)
+                elif path.is_dir():
+                    for f in sorted(path.rglob("*")):
+                        if f.is_file():
+                            z.write(f, Path(cfg.APP_NAME) / f.relative_to(out))
 
 
-def build_linux(args, platform: str, version: str, orbit_pass: dict[str, bytes]) -> list[Path]:
-    tarball = fetch_firefox(platform)
-    arch = LINUX_ARCH[platform]
-    work = args.work / platform
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
-    log(f"Unpacking Firefox for Linux ({arch})")
-    # Mozilla's tarball unpacks to a top-level "firefox/" directory (the same
-    # omni.ja / browser/omni.ja layout as the Windows "core"). The checksum is
-    # Mozilla's own, so this is a trusted archive.
-    run("tar", "-xf", tarball, "-C", work)
-    extracted = work / "firefox"
-    if not extracted.is_dir():
-        raise SystemExit(f"{tarball.name} did not unpack to a 'firefox' directory; has Mozilla changed its layout?")
-    app = work / "orbit-browser"
-    extracted.rename(app)
-
-    log("Rebranding and changing omni.ja")
-    stamp = customize_omni(app, platform="linux", version=version, build=args.build, orbit_pass=orbit_pass)
-    write_policies(app / "distribution", platform)
-    remove_ai_libraries(app, "linux")
-    # Firefox's updater would replace Orbit Browser with Mozilla's Firefox;
-    # OrbitUpdates installs new Orbit Browsers instead (as on Mac and Windows).
-    remove_present(app, UPDATER["linux"])
-    brand_linux(app)
-
+def build_linux(args, platform: str, version: str) -> list[Path]:
+    src = args.src
+    out = write_gn_args(src, platform)
+    autoninja(src, platform, ["chrome", "chrome/installer/linux:unstable_deb"], args.jobs)
+    arch = "x86_64" if platform == "linux" else "aarch64"
+    tree = out / cfg.LINUX_NAME
+    _stage_linux_tree(out, tree)
+    stage_distribution(tree)
     DIST.mkdir(exist_ok=True)
-    out = DIST / f"Orbit-Browser-{version}-Linux-{arch}.tar.xz"
-    if out.exists():
-        out.unlink()
+    tarxz = DIST / f"Orbit-Browser-{version}-Linux-{arch}.tar.xz"
+    if tarxz.exists():
+        tarxz.unlink()
     log("Packaging the tarball")
-    # tarfile (w:xz) rather than the tar CLI: it is the same on macOS and Linux,
-    # keeps the executable bits Firefox needs, and the filter drops the building
-    # account's uid/gid so the archive is reproducible.
-    with tarfile.open(out, "w:xz") as archive:
-        archive.add(app, arcname=app.name, filter=_reproducible_tarinfo)
-    print(f"stamp {stamp}")
-    return [out]
+    with tarfile.open(tarxz, "w:xz") as archive:
+        archive.add(tree, arcname=cfg.LINUX_NAME, filter=_reproducible)
+    return [tarxz]
 
 
-def _reproducible_tarinfo(info: tarfile.TarInfo) -> tarfile.TarInfo:
-    info.uid = info.gid = 0
-    info.uname = info.gname = ""
-    info.mtime = 1767225600  # 2026-01-01, as the omni.ja entries use.
-    return info
+def _stage_linux_tree(out: Path, tree: Path) -> None:
+    if tree.exists():
+        shutil.rmtree(tree)
+    tree.mkdir(parents=True)
+    wanted = ["chrome", "chrome_crashpad_handler", "chrome_sandbox", "*.pak", "*.bin",
+              "*.so", "icudtl.dat", "locales", "resources", "product_logo_48.png"]
+    for pattern in wanted:
+        for path in sorted(out.glob(pattern)):
+            dest = tree / path.relative_to(out)
+            if path.is_dir():
+                shutil.copytree(path, dest, symlinks=True, dirs_exist_ok=True)
+            elif path.is_file():
+                shutil.copyfile(path, dest)
+    (tree / f"{cfg.LINUX_NAME}.desktop").write_text(_linux_desktop())
 
 
-def brand_linux(app: Path) -> None:
-    """Orbit Browser's name, icon and profile on the unpacked Linux tree: the
-    engine's application data, the window-manager icons, and a desktop entry a
-    packager can install."""
-    ini = app / "application.ini"
-    ini.write_text(orbit_linux_application_ini(ini.read_text()))
-
-    # The window and launcher icon the desktop shows: Mozilla's defaults
-    # replaced with Orbit's mark at the sizes Firefox ships.
-    icons = app / "browser" / "chrome" / "icons" / "default"
-    replaced = 0
-    for size in (16, 32, 48, 64, 128):
-        source = BRANDING / "content" / f"icon{size}.png"
-        target = icons / f"default{size}.png"
-        if source.exists() and target.exists():
-            shutil.copyfile(source, target)
-            replaced += 1
-    if not replaced:
-        log("No Linux default icons were replaced; have they moved? (scripts/build.py)")
-
-    # A .desktop entry and its icon, for a packager or an install script. The
-    # StartupWMClass matches the RemotingName so the running window takes this
-    # icon rather than a generic one.
-    (app / f"{LINUX_REMOTING_NAME}.desktop").write_text(linux_desktop_entry())
-    icon128 = BRANDING / "content" / "icon128.png"
-    if icon128.exists():
-        shutil.copyfile(icon128, app / f"{LINUX_REMOTING_NAME}.png")
-
-
-#: The WM_CLASS / remoting name and profile directory (~/.orbit-browser), so
-#: Orbit Browser's window, desktop entry and profile are its own, apart from a
-#: Firefox installed beside it.
-LINUX_REMOTING_NAME = "orbit-browser"
-
-
-def orbit_linux_application_ini(firefox_ini: str) -> str:
-    """The engine's application data, from Firefox's, with Orbit Browser's
-    remoting name and profile folder (~/.orbit-browser), the crash reporter off,
-    and Name left "Firefox" (the user agent and add-ons go by it)."""
-    import configparser
-
-    ini = configparser.ConfigParser(interpolation=None)
-    ini.optionxform = str
-    ini.read_string(firefox_ini)
-    app = dict(ini["App"])
-    app["RemotingName"] = LINUX_REMOTING_NAME
-    app["Profile"] = LINUX_REMOTING_NAME
-    out = ["; Orbit Browser's application data, written by scripts/build.py from Firefox's.", "[App]"]
-    out += [f"{key}={value}" for key, value in app.items()]
-    for section in ("Gecko", "XRE"):
-        if ini.has_section(section):
-            out += ["", f"[{section}]"] + [f"{key}={value}" for key, value in ini[section].items()]
-    out += ["", "[Crash Reporter]", "Enabled=0", ""]
-    return "\n".join(out)
-
-
-def linux_desktop_entry() -> str:
-    """A freedesktop .desktop entry for Orbit Browser, shipped in the tarball for
-    a packager or install script to place. Exec is the engine's own launcher."""
+def _linux_desktop() -> str:
     return "\n".join([
-        "[Desktop Entry]",
-        "Version=1.0",
-        "Type=Application",
-        f"Name={APP_NAME}",
-        "GenericName=Web Browser",
-        "Comment=Browse the web with Orbit Browser",
-        "Exec=firefox %u",
-        f"Icon={LINUX_REMOTING_NAME}",
-        "Terminal=false",
-        "Categories=Network;WebBrowser;",
-        f"StartupWMClass={LINUX_REMOTING_NAME}",
-        "StartupNotify=true",
-        "MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;",
-        "",
+        "[Desktop Entry]", "Version=1.0", "Type=Application",
+        f"Name={cfg.APP_NAME}", "GenericName=Web Browser",
+        "Comment=Browse the web with Orbit Browser", "Exec=chrome %U",
+        f"Icon={cfg.LINUX_NAME}", "Terminal=false",
+        "Categories=Network;WebBrowser;", f"StartupWMClass={cfg.LINUX_NAME}",
+        "MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;", "",
     ])
 
 
-def bsdtar() -> str:
-    for name in ("bsdtar", "tar"):
-        path = shutil.which(name)
-        if path and "bsdtar" in subprocess.run([path, "--version"], capture_output=True, text=True).stdout:
-            return path
-    raise SystemExit("Unpacking Firefox for Windows needs bsdtar (libarchive-tools on Linux).")
+def _reproducible(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    info.mtime = 1767225600  # 2026-01-01
+    return info
 
 
-# -------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--platform", action="append", choices=PLATFORMS, help="mac, win64, win64-aarch64, linux or linux-aarch64 (repeatable)")
+    parser.add_argument("--platform", action="append", choices=PLATFORMS, help="repeatable")
     parser.add_argument("--orbit-pass", type=Path, default=ROOT.parent / "Orbit Pass", help="the Orbit Pass checkout")
     parser.add_argument("--build", type=int, default=0, help="the build number (CI's run number)")
     parser.add_argument("--release", action="store_true", help="a release: the version without -build.N")
     parser.add_argument("--sign", help="a Developer ID identity for the Mac app (ad hoc when left out)")
-    parser.add_argument("--work", type=Path, default=WORK, help="where the unpacked builds go (default work/)")
+    parser.add_argument("--jobs", "-j", type=int, help="autoninja parallelism")
+    parser.add_argument("--no-sync", action="store_true", help="reuse the source tree as it is (skip fetch/sync and the patch reset)")
+    parser.add_argument("--shallow", action="store_true", help="shallow gclient sync (no history; CI)")
     args = parser.parse_args(argv)
-    args.work = args.work.resolve()
+
     if args.platform:
         platforms = args.platform
     elif sys.platform == "darwin":
@@ -870,20 +345,35 @@ def main(argv=None) -> int:
     else:
         platforms = ["win64"]
 
-    firefox = firefox_pin()["version"]
-    version = orbit_version(args.build, args.release)
-    log(f"Orbit Browser {version} on Firefox {firefox}")
-    orbit_pass = orbit_pass_files(args.orbit_pass.resolve())
+    version = cfg.orbit_version(args.build, args.release)
+    chromium = sync.pin()["version"]
+    log(f"Orbit Browser {version} on Chromium {chromium}")
+
+    if not args.no_sync:
+        sync.ensure_depot_tools()
+        args.src = sync.ensure_source(shallow=args.shallow)
+    else:
+        args.src = sync.SRC
+        if not (args.src / ".git").exists():
+            raise SystemExit("--no-sync, but there is no source tree yet. Run without it once.")
+
     outputs = []
     for platform in platforms:
+        log(f"Applying Orbit's branding, patches and files ({platform})")
+        apply_branding(args.src, version, args.build)
+        patches.apply_all(args.src, platform_os(platform))
+        pass_out = args.src / "out" / OUT_DIR[platform] / "orbit-pass"
+        build_orbit_pass(args.orbit_pass.resolve(), pass_out)
         if platform == "mac":
-            if sys.platform != "darwin":
-                raise SystemExit("The Mac app is built on macOS.")
-            outputs += build_mac(args, version, orbit_pass)
+            outputs += build_mac(args, version)
         elif platform.startswith("linux"):
-            outputs += build_linux(args, platform, version, orbit_pass)
+            outputs += build_linux(args, platform, version)
         else:
-            outputs += build_windows(args, platform, version, orbit_pass)
+            outputs += build_windows(args, platform, version)
+        # Chromium's source tree is mutated per platform; reset before the next.
+        if not args.no_sync and platform != platforms[-1]:
+            sync._reset_tree()
+
     for out in outputs:
         print(out.relative_to(ROOT))
     return 0

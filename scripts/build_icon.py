@@ -15,11 +15,11 @@ outputs are committed, so building the browser needs none of this.
 
 Outputs, all under branding/:
     mark.svg, logo.svg, icon.svg       the tile, the bare mark, the macOS icon
-    content/                           replaces chrome://branding/content/ in the browser
+    content/                           the product logos and app marks scripts/build.py copies into the Chromium theme
     content/apps/                      the Orbit apps' marks, for the toolbar's Orbit menu and bookmarks
-    skin/sidebar-firefox.svg           the toolbar-coloured mark Firefox's theme shows
-    mac/firefox.icns, document.icns    the Mac app and its documents
-    windows/*.ico, VisualElements*     the Windows executables and Start tiles
+    skin/orbit-button.svg              the toolbar-coloured mark the Orbit button shows
+    mac/app.icns, document.icns        the Mac app and its documents
+    windows/*.ico, VisualElements*     the Windows executable and Start tiles
 """
 
 from __future__ import annotations
@@ -105,9 +105,6 @@ def write_svgs(r: Renderer) -> None:
     # The toolbar's Orbit button: the family's planet in orbit, in the toolbar's colour.
     planet = r.svg("orbit", "current", "16x16", "small").replace('fill="currentColor"', 'fill="context-fill"')
     (skin / "orbit-button.svg").write_text(planet)
-    # Firefox's theme draws its logo in the toolbar's colour (context-fill).
-    sidebar = r.svg("browser", "current", "26x26", "small").replace('fill="currentColor"', 'fill="context-fill"')
-    (skin / "sidebar-firefox.svg").write_text(sidebar)
 
 
 def tile(r: Renderer, px: int):
@@ -165,7 +162,7 @@ def write_pngs(r: Renderer) -> None:
     sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     windows = OUT / "windows"
     windows.mkdir(parents=True, exist_ok=True)
-    ico(windows / "firefox.ico", {px: tile(r, px) for px in sizes})
+    ico(windows / "app.ico", {px: tile(r, px) for px in sizes})
     ico(windows / "private_browsing.ico", {px: dark_tile(r, px) for px in sizes})
     ico(windows / "document.ico", {px: document(r, px) for px in sizes})
     shutil.copyfile(windows / "document.ico", content / "document.ico")
@@ -182,7 +179,7 @@ def write_pngs(r: Renderer) -> None:
 
     mac = OUT / "mac"
     mac.mkdir(parents=True, exist_ok=True)
-    icns(mac / "firefox.icns", lambda px: r.png("browser", "mac", str(px), *detail(px)))
+    icns(mac / "app.icns", lambda px: r.png("browser", "mac", str(px), *detail(px)))
     icns(mac / "document.icns", lambda px: document(r, px))
 
 
@@ -210,7 +207,7 @@ def icns(target: Path, make) -> None:
 def write_wordmark(font_path: Path) -> None:
     """"Orbit Browser" in Inter Display SemiBold, as outlines, so it needs no
     font: about-wordmark.svg (the about dialog colours it) and
-    firefox-wordmark.svg (the name the browser's pages ask for)."""
+    wordmark.svg (the name the browser's pages ask for)."""
     from fontTools.pens.boundsPen import BoundsPen
     from fontTools.pens.svgPathPen import SVGPathPen
     from fontTools.pens.transformPen import TransformPen
@@ -243,7 +240,7 @@ def write_wordmark(font_path: Path) -> None:
     (content / "about-wordmark.svg").write_text(
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}">{note}<path fill="context-fill" d="{pen.getCommands()}"/></svg>\n'
     )
-    (content / "firefox-wordmark.svg").write_text(
+    (content / "wordmark.svg").write_text(
         f'<svg xmlns="http://www.w3.org/2000/svg" fill="context-fill #111111" viewBox="{box}">{note}<path d="{pen.getCommands()}"/></svg>\n'
     )
 

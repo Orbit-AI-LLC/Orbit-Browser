@@ -9,7 +9,7 @@ comment names the version. Orbit Mission Control offers a payload only when
 its signature names the version in the release's orbit-update.json
 (.github/scripts/orbit_update_manifest.py collects the .sig files), and an
 installed Orbit Browser checks it against the public key it carries
-(orbitbrowser.updates.pubkey, branding/firefox-branding.js) before installing.
+(the update feed's pubkey, scripts/orbit_config.py ORBIT_UPDATES) before installing.
 
 The key is a Tauri signing key (`cargo tauri signer generate`), read from
 TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD as in the other
@@ -107,8 +107,8 @@ def sign(path: Path, version: str, key_id: bytes, seed: bytes, *, timestamp: int
 
 def verify(path: Path, signature: str, public_key: str) -> dict[str, str]:
     """Checks ``signature`` over the payload at ``path`` with a Tauri public key
-    (as tauri.conf.json holds it); returns the trusted comment's fields. What
-    OrbitBrowser.sys.mjs does in the browser, here for the tests."""
+    (as tauri.conf.json holds it); returns the trusted comment's fields. What the
+    browser's update component does before installing, here for the tests."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 

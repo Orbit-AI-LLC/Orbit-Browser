@@ -15,46 +15,48 @@ task. Say that it is missing and wait to be told what to do.
 ## Orbit Browser
 
 - `README.md` is the source of truth for what the browser is, how it is built and what it changes
-  in Firefox. Keep it current when behaviour changes.
-- Orbit Browser is Mozilla's own signed Firefox release, repacked: `firefox.json` pins the release
-  and its checksums, `scripts/build.py` makes the apps from it. Never edit a downloaded build by
-  hand; every change is made by the build, so moving to a new Firefox is
-  `python3 scripts/update_firefox.py` and a rebuild.
-### Hard rules for Orbit's changes to Firefox (do not break these)
+  in Chromium. Keep it current when behaviour changes.
+- Orbit Browser is a **source fork** of Chromium: `chromium.json` pins the Chromium release,
+  `scripts/sync.py` fetches depot_tools and the source, and `scripts/build.py` compiles it with
+  Orbit's changes. Never edit the checkout in `src/` by hand — the build resets it to pristine
+  Chromium every time, so a hand-edit is lost and untracked. Moving to a new Chromium is
+  `python3 scripts/update_chromium.py` (it re-pins and checks the patches) then a rebuild.
 
-Orbit Browser keeps every change it makes to Firefox apart from Mozilla's code, the way the Firefox
-forks (Tor Browser, Mullvad, LibreWolf) do. These rules are not optional:
+### Hard rules for Orbit's changes to Chromium (do not break these)
 
-1. **Edit Mozilla's own omni.ja files only through `patches/`.** Each is a unified-diff `.patch`
-   file, one per Mozilla file, at `patches/<jar>/<path>.patch` (`<jar>` is `browser` or `gre`),
-   applied with `git apply`. To change what Orbit does to a Mozilla file, edit or add a patch there.
-   Never edit a downloaded build, an unpacked `omni.ja`, or `work/` by hand — the build makes every
-   change, so a hand-edit is lost and untracked.
-2. **Never loosen a patch to make it apply.** When a new Firefox moves the code, `git apply` fails
-   and names the patch and hunk. Fix the patch so it still carries Orbit's change — re-anchor it on
-   the new surrounding code (dump the pristine file with `scripts/firefox_file.py`, re-make the edit,
-   `diff -u`). Do not delete hunks, widen/blur context, or drop the change just to get a clean apply:
-   a patch that applies but no longer carries its change silently brings back a feature Orbit removed.
-3. **Add whole new Orbit files through `scripts/build.py`, not as patches.** New files (branding,
-   `browser/modules/`, `browser/content/`, the launcher, `distribution/policies.json`) live in the
-   repo as themselves; `build.py` drops them in. Patches are only for editing Mozilla's existing files.
-4. **The only edits allowed outside `patches/` are the data-generated ones already in
-   `scripts/omni_patches.py`** (the wallpapers from `ORBIT_WALLPAPERS`, the Orbit AI provider from
-   `ORBIT_AI_URL`). Don't add new in-code string replacements there for things that could be a patch.
+Orbit Browser keeps every change it makes to Chromium apart from Google's code, the way the Chromium
+forks (Brave, ungoogled-chromium, Vivaldi) do. These rules are not optional:
+
+1. **Edit Chromium's own files only through `patches/`.** Each is a unified-diff `.patch` file, one
+   per Chromium file, at `patches/<path-in-src>.patch`, applied with `git apply`. To change what
+   Orbit does to a Chromium file, edit or add a patch there. Never edit the `src/` checkout, an
+   output tree, or anything under `src/` by hand.
+2. **Never loosen a patch to make it apply.** When a new Chromium moves the code, `git apply` fails
+   and names the patch. Re-anchor it on the new surrounding code (sync the tree, re-make the edit,
+   `git diff`). Do not delete hunks, widen/blur context, or drop the change just to get a clean
+   apply: a patch that applies but no longer carries its change silently brings back something Orbit
+   removed.
+3. **Add whole new Orbit files through `chromium_src/`, not as patches.** New files (the Orbit
+   browser component) live there as themselves and are copied into the tree; a patch to a `BUILD.gn`
+   wires them into the build. Patches are only for editing Chromium's existing files.
+4. **Prefer config over patches.** A build-time choice is a GN argument in `build/args/`; what a
+   running browser does by policy is in `distribution/`; branding data is in `branding/`, copied in
+   by the build. Only reach for a patch when the change genuinely needs Chromium's source edited.
 5. **A new or changed patch must apply cleanly before you hand work back.** Run
-   `python3 scripts/update_firefox.py --check` (every patch against the pinned Firefox) and the tests
-   below. If a patch can't be made to apply without dropping its change, stop and say so.
-6. **Moving to a new Firefox is `python3 scripts/update_firefox.py` (it pins and checks the patches)
-   then a rebuild.** Don't bump `firefox.json` by hand.
-- Run `python3 -m unittest discover -s tests` before handing work back; it checks every patch,
-  policy and locked pref against the pinned Firefox. After a Mac build, also run
-  `python3 tests/smoke.py`, which starts the app and checks it from inside. Say plainly if anything
+   `python3 scripts/update_chromium.py --check` (every patch against the pinned Chromium) and the
+   tests below. If a patch can't be made to apply without dropping its change, stop and say so.
+6. **Moving to a new Chromium is `python3 scripts/update_chromium.py`** (it pins and checks the
+   patches) then a rebuild. Don't bump `chromium.json` by hand.
+
+- Run `python3 -m unittest discover -s tests` before handing work back; it checks the committed
+  config (the pin, the GN arguments, the branding, the locked policies and the first-run defaults)
+  and the shared update signatures. It needs no source tree or compiler. Say plainly if anything
   fails.
-- The logo comes from `scripts/orbitmark.swift` (the Orbit family's renderer, with the browser's
-  mark added) through `scripts/build_icon.py`; edit those, never the files in `branding/`.
-- Orbit AI's `/threads/start/` and its composer (`textarea#composer-input`, the "Send message"
-  button) are what the sidebar relies on; Orbit Pass's server accepts the fixed extension UUID in
-  `scripts/build.py`. Change those together with the other repository.
-- Orbit Pass is built in from the sibling checkout (`../Orbit Pass/extension`, or
-  `--orbit-pass`). Its Firefox manifest is made by that repository's
-  `extension/scripts/package.mjs --firefox`; change the extension there, not here.
+- The logo comes from `scripts/orbitmark.swift` (the Orbit family's shared renderer) through
+  `scripts/build_icon.py`; edit those, never the files in `branding/`.
+- Orbit AI's `/threads/start/` and Orbit Pass's fixed extension id (`scripts/orbit_config.py`) are
+  what the browser relies on; Orbit Pass's server accepts the same id. Change those together with
+  the other repository.
+- Orbit Pass is built in from the sibling checkout (`../Orbit Pass/extension`, or `--orbit-pass`).
+  Its Chromium manifest is made by that repository's `extension/scripts/package.mjs --chrome`;
+  change the extension there, not here.

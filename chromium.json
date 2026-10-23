@@ -1,0 +1,8 @@
+{
+  "version": "141.0.7390.65",
+  "milestone": 141,
+  "channel": "stable",
+  "src": "https://chromium.googlesource.com/chromium/src.git",
+  "depot_tools": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+  "notes": "The Chromium release Orbit Browser is forked from. Unlike a binary repack, the source is pinned by git tag (version) and verified by git, not by a checksum of a download. Move to a new Chromium with `python3 scripts/update_chromium.py`, which pins the newest stable tag and then checks that every patch in patches/ still applies to it. depot_tools is pinned to a branch, not a commit: `gclient sync` follows the DEPS of the checked-out tag."
+}

@@ -1,0 +1,53 @@
+{
+  "GenAiDefaultSettings": 2,
+  "TabOrganizerSettings": 2,
+  "HelpMeWriteSettings": 2,
+  "CreateThemesSettings": 2,
+  "HistorySearchSettings": 2,
+  "TabCompareSettings": 2,
+  "DevToolsGenAiSettings": 2,
+  "AutofillPredictionSettings": 2,
+  "GeminiSettings": 1,
+  "GenAILocalFoundationalModelSettings": 1,
+  "ProductSpecificationsEnabled": 0,
+
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "MetricsReportingEnabled": false,
+  "UrlKeyedAnonymizedDataCollectionEnabled": false,
+  "FeedbackSurveysEnabled": false,
+  "BackgroundModeEnabled": false,
+  "ComponentUpdatesEnabled": false,
+
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+
+  "SpellCheckServiceEnabled": false,
+  "SearchSuggestEnabled": false,
+  "NetworkPredictionOptions": 2,
+  "TranslateEnabled": false,
+  "ShoppingListEnabled": false,
+  "SafeBrowsingProtectionLevel": 0,
+  "DefaultBrowserSettingEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "WelcomePageOnOSUpgradeEnabled": false,
+  "HighEfficiencyModeEnabled": true,
+
+  "ExtensionSettings": {
+    "cabceppaohijjjeghpmbnojliinelphd": {
+      "installation_mode": "force_installed",
+      "update_url": "https://control.orbit.com.ai/extensions/orbit-pass/updates.xml",
+      "toolbar_pin": "force_pinned"
+    }
+  },
+
+  "ManagedBookmarks": [
+    { "toplevel_name": "Orbit" },
+    { "name": "Orbit AI", "url": "https://ai.orbit.com.ai/" },
+    { "name": "Orbit Mail", "url": "https://mail.orbit.com.ai/" },
+    { "name": "Orbit Calendar", "url": "https://mail.orbit.com.ai/calendar/" },
+    { "name": "Orbit Chat", "url": "https://chat.orbit.com.ai/" },
+    { "name": "Orbit Pass", "url": "https://pass.orbit.com.ai/vault/" }
+  ]
+}

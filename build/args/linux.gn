@@ -1,0 +1,5 @@
+# Linux x86_64 GN arguments (appended to common.gn by scripts/build.py).
+target_os = "linux"
+target_cpu = "x64"
+# Build against Chromium's bundled sysroot so the result runs on older glibc.
+use_sysroot = true

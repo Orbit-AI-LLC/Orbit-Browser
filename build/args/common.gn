@@ -1,0 +1,48 @@
+# Orbit Browser's GN arguments, common to every platform. scripts/build.py
+# writes these (plus the platform file beside this one) to out/Orbit/args.gn
+# before `gn gen`. Everything here is a build-time choice about what Chromium
+# compiles into Orbit Browser; what a running Orbit Browser does by policy is in
+# distribution/, and edits to Chromium's source are in patches/.
+
+# A release build, but not Google Chrome: is_chrome_branded pulls in Google's
+# branding, services and API keys, which Orbit does not ship. Orbit's own
+# branding is applied from branding/ by scripts/build.py (the BRANDING file and
+# the product icons), over Chromium's default ("chromium") branding.
+is_official_build = true
+is_chrome_branded = false
+
+# No Google API keys baked in: without these, Chromium's calls to Google's sign
+# in, Sync, Safe Browsing lookups and location services have no credentials.
+# Orbit's services (Mission Control, Orbit AI, Orbit Pass) are used instead, and
+# the GenAI/metrics/sign-in features are locked off by policy (distribution/).
+use_official_google_api_keys = false
+google_api_key = ""
+google_default_client_id = ""
+google_default_client_secret = ""
+safe_browsing_mode = 0
+
+# Media: ship the proprietary codecs (H.264, AAC) a browser needs for the open
+# web, as Chrome's builds do. Widevine (Google's DRM) is not built; a fork can't
+# ship it signed, and Orbit leaves it out.
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
+enable_widevine = false
+
+# Things Orbit does not use, so does not build: Google's Hangout/Cast glue, the
+# NaCl runtime (removed from Chrome too), and the component updater's Google
+# feeds. Orbit Browser updates itself from Orbit Mission Control
+# (chromium_src/orbit/update/), so Chromium's own updater (Omaha/Keystone) is
+# not built or shipped.
+enable_hangout_services_extension = false
+enable_nacl = false
+
+# Reporting and crash upload off at build time as well as by policy: Orbit sends
+# nothing to Google.
+enable_reporting = false
+
+# Keep the build tractable for a fork's CI: no PGO profiles (a Chrome-branded
+# artefact Orbit can't fetch), light symbols.
+chrome_pgo_phase = 0
+symbol_level = 1
+blink_symbol_level = 0
+dcheck_always_on = false
