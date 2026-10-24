@@ -36,7 +36,6 @@ Where it is placed (the installers and `scripts/build.py` do this):
 
 | Platform | Managed-policy location |
 | --- | --- |
-| Linux | `/etc/orbit-browser/policies/managed/orbit.json` |
 | Windows | the registry under `HKLM\SOFTWARE\Policies\OrbitBrowser` (the installer writes it) |
 | macOS | the `ai.com.orbit.browser` managed-preferences domain (a configuration profile) |
 

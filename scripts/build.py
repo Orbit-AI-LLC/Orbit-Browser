@@ -3,7 +3,6 @@
     python3 scripts/build.py                       # the host's default (Mac on a Mac, Linux on Linux, else Windows)
     python3 scripts/build.py --platform win64
     python3 scripts/build.py --platform mac-arm64 --platform mac-x64
-    python3 scripts/build.py --platform linux
 
 Orbit Browser *repacks* a prebuilt Chromium rather than compiling it: it
 downloads the ungoogled-chromium build chromium.json pins (checking its
@@ -36,7 +35,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
@@ -51,13 +49,14 @@ CACHE = ROOT / ".cache" / "chromium"
 WORK = ROOT / "work"
 DIST = ROOT / "dist"
 BRANDING = ROOT / "branding"
-PLATFORMS = ("win64", "mac-x64", "mac-arm64", "linux")
+#: ungoogled-chromium ships official Windows and macOS builds only; there is no
+#: official generic Linux binary, so Orbit Browser's repack does not build Linux.
+PLATFORMS = ("win64", "mac-x64", "mac-arm64")
 #: How a platform names itself for Mission Control's update feed (target, arch, os).
 UPDATE_TARGET = {
     "win64": ("windows", "x86_64", "windows"),
     "mac-x64": ("darwin", "x86_64", "mac"),
     "mac-arm64": ("darwin", "aarch64", "mac"),
-    "linux": ("linux", "x86_64", "linux"),
 }
 
 
@@ -153,12 +152,14 @@ def build_mac(args, platform: str, version: str) -> list[Path]:
     log("Rebranding")
     rename_mac_bundle(app / "Contents", version)
     resources = app / "Contents" / "Resources"
+    # Chromium's app and document icons are app.icns and document.icns; replace
+    # each in place with Orbit's (match by exact name, so the app icon and the
+    # document icon never cross over).
     for icon in ("app.icns", "document.icns"):
         source = BRANDING / "mac" / icon
-        if source.exists():
-            for existing in resources.glob("*.icns"):
-                if existing.name == icon or "app" in existing.name.lower() or "chromium" in existing.name.lower():
-                    shutil.copyfile(source, existing)
+        target = resources / icon
+        if source.exists() and target.exists():
+            shutil.copyfile(source, target)
     stage_initial_preferences(resources)
     if args.orbit_pass:
         build_orbit_pass(args.orbit_pass.resolve(), work / "extensions")
@@ -199,7 +200,7 @@ def make_dmg(app: Path, out: Path, sign: str | None) -> None:
         (stage / "Applications").symlink_to("/Applications")
         if out.exists():
             out.unlink()
-        run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage, "-format", "ULMO", "-fs", "HFS+", out)
+        run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", out)
     if sign:
         run("codesign", "--force", "--timestamp", "--sign", sign, out)
 
@@ -237,50 +238,6 @@ def build_windows(args, platform: str, version: str) -> list[Path]:
     return [portable]
 
 
-# -- Linux --------------------------------------------------------------------------------
-
-
-def build_linux(args, platform: str, version: str) -> list[Path]:
-    archive = fetch_chromium(platform)
-    work = args.work / platform
-    reset_dir(work)
-    log("Unpacking ungoogled-chromium")
-    run("tar", "-xf", archive, "-C", work)
-    inner = _single_dir(work)
-    app = work / cfg.LINUX_NAME
-    inner.rename(app)
-
-    log("Rebranding")
-    stage_initial_preferences(app)
-    icon = BRANDING / "content" / "icon128.png"
-    if icon.exists():
-        shutil.copyfile(icon, app / f"{cfg.LINUX_NAME}.png")
-    (app / f"{cfg.LINUX_NAME}.desktop").write_text(linux_desktop())
-    if args.orbit_pass:
-        build_orbit_pass(args.orbit_pass.resolve(), app / "extensions")
-
-    DIST.mkdir(exist_ok=True)
-    out = DIST / f"Orbit-Browser-{version}-Linux-x86_64.tar.xz"
-    if out.exists():
-        out.unlink()
-    log("Packaging the tarball")
-    with tarfile.open(out, "w:xz") as archive_out:
-        archive_out.add(app, arcname=app.name, filter=_reproducible)
-    stage_policy_file(DIST)
-    return [out]
-
-
-def linux_desktop() -> str:
-    return "\n".join([
-        "[Desktop Entry]", "Version=1.0", "Type=Application",
-        f"Name={cfg.APP_NAME}", "GenericName=Web Browser",
-        "Comment=Browse the web with Orbit Browser", "Exec=chrome %U",
-        f"Icon={cfg.LINUX_NAME}", "Terminal=false",
-        "Categories=Network;WebBrowser;", f"StartupWMClass={cfg.LINUX_NAME}",
-        "MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;", "",
-    ])
-
-
 # -- helpers ------------------------------------------------------------------------------
 
 
@@ -295,13 +252,6 @@ def _single_dir(parent: Path) -> Path:
     if len(dirs) != 1:
         raise SystemExit(f"Expected one directory in the unpacked build, found {[p.name for p in dirs]}.")
     return dirs[0]
-
-
-def _reproducible(info: tarfile.TarInfo) -> tarfile.TarInfo:
-    info.uid = info.gid = 0
-    info.uname = info.gname = ""
-    info.mtime = 1767225600  # 2026-01-01
-    return info
 
 
 # -----------------------------------------------------------------------------------------
@@ -322,8 +272,6 @@ def main(argv=None) -> int:
         platforms = args.platform
     elif sys.platform == "darwin":
         platforms = ["mac-arm64"]
-    elif sys.platform.startswith("linux"):
-        platforms = ["linux"]
     else:
         platforms = ["win64"]
 
@@ -333,8 +281,6 @@ def main(argv=None) -> int:
     for platform in platforms:
         if platform.startswith("mac"):
             outputs += build_mac(args, platform, version)
-        elif platform == "linux":
-            outputs += build_linux(args, platform, version)
         else:
             outputs += build_windows(args, platform, version)
     for out in outputs:

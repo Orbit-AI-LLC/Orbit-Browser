@@ -1,11 +1,19 @@
 {
-  "version": "",
+  "version": "155.0.8059.84-1.1",
   "source": "ungoogled-chromium",
   "builds": {
-    "win64": {"url": "", "sha256": ""},
-    "mac-x64": {"url": "", "sha256": ""},
-    "mac-arm64": {"url": "", "sha256": ""},
-    "linux": {"url": "", "sha256": ""}
+    "win64": {
+      "url": "https://github.com/ungoogled-software/ungoogled-chromium-windows/releases/download/155.0.8059.84-1.1/ungoogled-chromium_155.0.8059.84-1.1_windows_x64.zip",
+      "sha256": "ce4697b197faf3f8f7cb4838832930bdbd3f8c5be48a0e95dea9457c8293fab0"
+    },
+    "mac-x64": {
+      "url": "https://github.com/ungoogled-software/ungoogled-chromium-macos/releases/download/155.0.8059.84-1.1/ungoogled-chromium_155.0.8059.84-1.1_x86_64-macos.dmg",
+      "sha256": "1123f91bb16e67558ab961974527d3c8b24d5d1f05e7a249430f2caae3530130"
+    },
+    "mac-arm64": {
+      "url": "https://github.com/ungoogled-software/ungoogled-chromium-macos/releases/download/155.0.8059.84-1.1/ungoogled-chromium_155.0.8059.84-1.1_arm64-macos.dmg",
+      "sha256": "a91ffff0da8587ec253c01c246beb4ae59a8fd4e221b76374ec0a5ed5f987b6c"
+    }
   },
-  "notes": "The prebuilt Chromium Orbit Browser repacks: ungoogled-chromium, whose builds already have Google's web services, sign-in and reporting removed. Each platform pins the download URL and its SHA-256, the way the former firefox.json did. These are empty here and populated by `python3 scripts/update_chromium.py`, which reads the latest ungoogled-chromium release and its checksums; scripts/build.py refuses a build whose checksum is empty or does not match. ungoogled-chromium ships per-architecture macOS builds (no universal), so mac-x64 and mac-arm64 are separate."
+  "notes": "The prebuilt ungoogled-chromium Orbit Browser repacks, pinned per platform by download URL and SHA-256. ungoogled-software ships official Windows and macOS builds (own release repos); there is no official generic Linux binary, so Linux is not built here (Linux users install ungoogled-chromium from their distro). Re-pin with `python3 scripts/update_chromium.py`, which reads the newest Windows/macOS releases and their checksums from GitHub."
 }

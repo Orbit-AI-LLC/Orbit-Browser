@@ -1,6 +1,6 @@
 # Orbit Browser
 
-Orbit's web browser for the Mac, Windows and Linux. Its engine is Chromium, by
+Orbit's web browser for the Mac and Windows. Its engine is Chromium, by
 way of **ungoogled-chromium** — Chromium with Google's web services, sign-in and
 reporting already removed. Orbit Browser *repacks* a pinned ungoogled-chromium
 build (in `chromium.json`) and makes it Orbit's, without a compiler.
@@ -27,10 +27,9 @@ Orbit Pass built in — then repackages. That keeps builds small and fast (minut
 on a standard GitHub runner).
 
 ```bash
-python3 scripts/build.py                              # the host's default (Mac on a Mac, Linux on Linux, else Windows)
+python3 scripts/build.py                              # the host's default (Mac on a Mac, else Windows)
 python3 scripts/build.py --platform mac-arm64 --platform mac-x64
 python3 scripts/build.py --platform win64
-python3 scripts/build.py --platform linux
 python3 -m unittest discover -s tests                 # the committed config and the update signatures
 ```
 
@@ -38,10 +37,12 @@ python3 -m unittest discover -s tests                 # the committed config and
 | --- | --- | --- |
 | `mac-arm64`, `mac-x64` | macOS | `Orbit-Browser-<version>-macOS-AppleSilicon.dmg` / `…-Intel.dmg` and an `.app.tar.gz` update payload each |
 | `win64` | Windows | a portable `…-Windows-x64.zip` |
-| `linux` | Linux | `…-Linux-x86_64.tar.xz` |
 
-ungoogled-chromium ships per-architecture macOS builds (no universal), so the Mac
-app is two builds. Orbit Pass comes from the Orbit Pass checkout beside this one
+ungoogled-chromium publishes official Windows and macOS builds only (no official
+generic Linux binary), so Orbit Browser builds those two; macOS has no universal
+build, so the Mac app is two per-architecture builds. Linux users install
+ungoogled-chromium from their distribution. Orbit Pass comes from the Orbit Pass
+checkout beside this one
 (`../Orbit Pass`, or `--orbit-pass <path>`): the build runs its
 `extension/scripts/package.mjs --chrome`. Downloads are kept in `.cache/`,
 unpacked trees in `work/`. `--sign "Developer ID Application"` signs the Mac app.
@@ -57,8 +58,8 @@ A repack can only change what it can unpack and re-pack, so everything Orbit doe
 is configuration, not compiled code:
 
 - **Branding** — the app name and icon — in `branding/`, applied by
-  `scripts/build.py` (the bundle name/Info.plist on macOS, the folder and `.desktop`
-  on Linux). The mark is rendered by `scripts/orbitmark.swift` (the Orbit family's
+  `scripts/build.py` (the bundle name/Info.plist on macOS; the install folder on
+  Windows). The mark is rendered by `scripts/orbitmark.swift` (the Orbit family's
   shared renderer) through `scripts/build_icon.py`; edit those, not `branding/`.
 - **Locked behaviour** — `distribution/policies/orbit.json`, Chromium's enterprise
   policy, placed at the OS managed-policy location by the installer.
@@ -83,21 +84,18 @@ do are out of reach and handled differently:
 ### Moving to a new Chromium
 
 ungoogled-chromium publishes a new build after each Chromium release; Orbit Browser
-gets it by re-pinning. The binaries are built and hosted by ungoogled-chromium's
-contributors (linked from the [binaries page][bin]), so the per-platform URLs are
-passed in:
+gets it by re-pinning:
 
 ```bash
-python3 scripts/update_chromium.py                    # prints the newest version and what to pass
-python3 scripts/update_chromium.py <version> \
-    --url win64=<url> --url mac-x64=<url> --url mac-arm64=<url> --url linux=<url>
+python3 scripts/update_chromium.py                    # pin the newest Windows + macOS release
+python3 scripts/update_chromium.py --check             # report pinned vs newest
 python3 scripts/build.py                               # build
 ```
 
-`update_chromium.py` downloads each build, computes its SHA-256, and writes
-`chromium.json`; `build.py` refuses a download whose checksum differs.
-
-[bin]: https://ungoogled-software.github.io/ungoogled-chromium-binaries/
+`update_chromium.py` reads the newest release of ungoogled-software's Windows and
+macOS repos from GitHub and takes each asset's URL and the SHA-256 GitHub records
+for it (no download needed), writing `chromium.json`; `build.py` refuses a download
+whose checksum differs.
 
 ## Google's AI and services, removed
 

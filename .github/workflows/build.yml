@@ -106,10 +106,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # ungoogled-chromium has official Windows and macOS builds only; there is
+        # no official generic Linux binary, so Orbit Browser does not build Linux.
         include:
-          - name: linux
-            os: ubuntu-latest
-            platforms: --platform linux
           - name: windows
             os: windows-latest
             platforms: --platform win64

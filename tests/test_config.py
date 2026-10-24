@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import orbit_config as cfg  # noqa: E402
 
-PLATFORMS = ("win64", "mac-x64", "mac-arm64", "linux")
+PLATFORMS = ("win64", "mac-x64", "mac-arm64")
 
 
 class PinTest(unittest.TestCase):
