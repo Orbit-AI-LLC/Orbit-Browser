@@ -15,8 +15,8 @@ name: Build and release
 # Mission Control, once the release carries signatures made with Orbit Browser's
 # update key (a Tauri signing key, as in the other Orbit apps):
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-# Orbit Pass is bundled from its own private repository:
-#   ORBIT_PASS_TOKEN            read-only Contents on Orbit-AI-LLC/Orbit-Pass
+# Orbit Pass is not bundled; it is force-installed from Orbit Mission Control by
+# policy (distribution/policies/orbit.json).
 # The Mac app is signed and notarized with the Developer ID secrets (as Orbit Pass):
 #   MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD, APPLE_TEAM_ID,
 #   NOTARY_APPLE_ID, NOTARY_PASSWORD
@@ -124,17 +124,9 @@ jobs:
       NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: Orbit-AI-LLC/Orbit-Pass
-          token: ${{ secrets.ORBIT_PASS_TOKEN }}
-          path: orbit-pass
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: Load the Developer ID (mac)
         if: matrix.name == 'mac' && env.MACOS_CERTIFICATE_P12 != ''
         shell: bash
@@ -154,7 +146,7 @@ jobs:
         shell: bash
         run: >
           python3 scripts/build.py ${{ matrix.platforms }}
-          --orbit-pass orbit-pass --build ${{ needs.version.outputs.build }}
+          --build ${{ needs.version.outputs.build }}
           ${{ needs.version.outputs.release }}
           ${SIGN_IDENTITY:+--sign "$SIGN_IDENTITY"}
       - name: Notarize (mac)

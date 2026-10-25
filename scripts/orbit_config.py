@@ -30,12 +30,12 @@ LINUX_NAME = "orbit-browser"
 #: Windows install registry name (OrbitUpdates and the installer agree on it).
 WINDOWS_APP_ID = "OrbitBrowser"
 
-#: Orbit Pass is built in: force-installed and un-removable. Its stable
-#: extension id is the same in every copy of Orbit Browser, so Orbit Pass's
-#: server knows the address a sign-in comes back to. For a Chromium (MV3)
-#: build the id is the one derived from Orbit Pass's packaging key; Orbit Pass's
-#: own repo (extension/scripts/package.mjs --chrome) produces the .crx and
-#: reports this id. Keep the two in step (see ../Orbit Pass).
+#: Orbit Pass is built in: force-installed and un-removable by policy
+#: (distribution/policies/orbit.json), served from Orbit Mission Control's update
+#: URL below -- not bundled into the app. Its stable extension id (derived from
+#: Orbit Pass's packaging key) is the same in every copy of Orbit Browser, so
+#: Orbit Pass's server knows the address a sign-in comes back to. Keep this id in
+#: step with Mission Control and the Orbit Pass repository (see ../Orbit Pass).
 ORBIT_PASS_ID = "cabceppaohijjjeghpmbnojliinelphd"
 #: Where Orbit Mission Control serves the force-install update manifest for it.
 ORBIT_PASS_UPDATE_URL = "https://control.orbit.com.ai/extensions/orbit-pass/updates.xml"

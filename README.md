@@ -11,7 +11,7 @@ build (in `chromium.json`) and makes it Orbit's, without a compiler.
 | **Name and icon** | "Orbit Browser" as the app's name, the Orbit family's mark as its icon (the deep in-UI strings stay "Chromium" — a repack can't recompile them) | `branding/`, `scripts/build_icon.py`, `scripts/orbitmark.swift` |
 | **Google's AI** | Every GenAI feature off and locked by policy, so no Chromium assistant is offered | `distribution/policies/orbit.json` |
 | **Orbit AI, the Orbit button** | Orbit's assistant, account and apps, delivered as a force-installed Orbit extension (a repack adds UI through extensions, not built-in C++) | `distribution/policies/orbit.json` |
-| **Orbit Pass** | Built in: force-installed and pinned, un-removable; bundled from the Orbit Pass checkout | `distribution/policies/orbit.json`, Orbit Pass's `extension/` |
+| **Orbit Pass** | Built in: force-installed and pinned, un-removable, from Orbit Mission Control | `distribution/policies/orbit.json`, Orbit Pass's `extension/` |
 | **Google's services** | No Google account/Sync, metrics, background services, component updates, spelling or prediction services | `distribution/policies/orbit.json` |
 | **Orbit's instead** | The Orbit apps as managed bookmarks, the Orbit home page and new tab | `distribution/policies/orbit.json`, `distribution/initial_preferences` |
 | **Site data** | ungoogled-chromium deletes site data when you close all windows by default; Orbit sets it back to "Allow sites to save data" | `distribution/initial_preferences` |
@@ -41,11 +41,10 @@ python3 -m unittest discover -s tests                 # the committed config and
 ungoogled-chromium publishes official Windows and macOS builds only (no official
 generic Linux binary), so Orbit Browser builds those two; macOS has no universal
 build, so the Mac app is two per-architecture builds. Linux users install
-ungoogled-chromium from their distribution. Orbit Pass comes from the Orbit Pass
-checkout beside this one
-(`../Orbit Pass`, or `--orbit-pass <path>`): the build runs its
-`extension/scripts/package.mjs --chrome`. Downloads are kept in `.cache/`,
-unpacked trees in `work/`. `--sign "Developer ID Application"` signs the Mac app.
+ungoogled-chromium from their distribution. Orbit Pass is not bundled — it is
+force-installed from Orbit Mission Control by policy (see below). Downloads are
+kept in `.cache/`, unpacked trees in `work/`. `--sign "Developer ID Application"`
+signs the Mac app.
 
 **Versions.** Orbit Browser has its own version, `VERSION` in
 `scripts/orbit_config.py`, apart from the Chromium it is built on
@@ -112,10 +111,11 @@ lists them; Settings says the browser is managed.
 
 Chromium's own password manager and autofill are off and locked, and Orbit Pass is
 **force-installed and un-removable** (`ExtensionSettings` → `force_installed`,
-`force_pinned`), served by Orbit Mission Control. Its stable extension id is the
-same in every copy (keep it in step between `scripts/orbit_config.py` and Orbit
-Pass's `extension/`). Orbit Pass's Chromium manifest is made by that repository's
-`extension/scripts/package.mjs --chrome`; change the extension there, not here.
+`force_pinned`), served from Orbit Mission Control's extension update URL — not
+bundled into the app (that is the standard Chromium way, and needs no build-time
+packaging). Its stable extension id is the same in every copy; keep it in step
+between `scripts/orbit_config.py` (`ORBIT_PASS_ID` and `ORBIT_PASS_UPDATE_URL`),
+Mission Control and the Orbit Pass repository.
 
 ## Updates
 

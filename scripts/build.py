@@ -1,15 +1,16 @@
 """Build Orbit Browser by repacking ungoogled-chromium.
 
-    python3 scripts/build.py                       # the host's default (Mac on a Mac, Linux on Linux, else Windows)
+    python3 scripts/build.py                       # the host's default (Mac on a Mac, else Windows)
     python3 scripts/build.py --platform win64
     python3 scripts/build.py --platform mac-arm64 --platform mac-x64
 
 Orbit Browser *repacks* a prebuilt Chromium rather than compiling it: it
 downloads the ungoogled-chromium build chromium.json pins (checking its
 SHA-256), unpacks it, and changes what can be changed without a compiler — the
-app's name and icon, the enterprise policies, the first-run preferences, and
-Orbit Pass built in. That keeps builds small and fast (minutes on a standard
-GitHub runner), the trade for a source fork's deeper reach.
+app's name and icon, the enterprise policies and the first-run preferences. That
+keeps builds small and fast (minutes on a standard GitHub runner), the trade for
+a source fork's deeper reach. Orbit Pass is not bundled: it is force-installed by
+policy from Orbit Mission Control (distribution/policies/orbit.json).
 
 ungoogled-chromium already has Google's web services, sign-in and reporting
 removed; Orbit's policies (distribution/) lock the rest off and put Orbit's
@@ -119,15 +120,10 @@ def stage_policy_file(package_dir: Path) -> None:
     shutil.copyfile(ROOT / "distribution" / "policies" / "orbit.json", package_dir / "orbit-policy.json")
 
 
-def build_orbit_pass(checkout: Path, dest: Path) -> None:
-    """Orbit Pass's Chromium (MV3) package, staged as a pre-installed extension.
-    It is also force-installed and un-removable by policy (distribution/)."""
-    packager = checkout / "extension" / "scripts" / "package.mjs"
-    if not packager.exists():
-        log(f"No Orbit Pass at {checkout}; skipping (force-installed by policy at runtime). Pass --orbit-pass to bundle it.")
-        return
-    dest.mkdir(parents=True, exist_ok=True)
-    run("node", str(packager), "--chrome", "--crx", str(dest / "orbit-pass.crx"))
+# Orbit Pass is not bundled into the app: it is force-installed and un-removable
+# by policy (distribution/policies/orbit.json -> ExtensionSettings), served from
+# Orbit Mission Control at runtime. That is the standard Chromium way to ship a
+# built-in extension, and it needs no Chrome packaging step at build time.
 
 
 # -- macOS --------------------------------------------------------------------------------
@@ -161,8 +157,6 @@ def build_mac(args, platform: str, version: str) -> list[Path]:
         if source.exists() and target.exists():
             shutil.copyfile(source, target)
     stage_initial_preferences(resources)
-    if args.orbit_pass:
-        build_orbit_pass(args.orbit_pass.resolve(), work / "extensions")
 
     if args.sign:
         log("Signing")
@@ -221,8 +215,6 @@ def build_windows(args, platform: str, version: str) -> list[Path]:
 
     log("Rebranding")
     stage_initial_preferences(app)
-    if args.orbit_pass:
-        build_orbit_pass(args.orbit_pass.resolve(), app / "extensions")
 
     DIST.mkdir(exist_ok=True)
     portable = DIST / f"Orbit-Browser-{version}-Windows-x64.zip"
@@ -260,7 +252,6 @@ def _single_dir(parent: Path) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--platform", action="append", choices=PLATFORMS, help="repeatable")
-    parser.add_argument("--orbit-pass", type=Path, default=ROOT.parent / "Orbit Pass", help="the Orbit Pass checkout (bundled as a pre-installed extension)")
     parser.add_argument("--build", type=int, default=0, help="the build number (CI's run number)")
     parser.add_argument("--release", action="store_true", help="a release: the version without -build.N")
     parser.add_argument("--sign", help="a Developer ID identity for the Mac app (ad hoc when left out)")

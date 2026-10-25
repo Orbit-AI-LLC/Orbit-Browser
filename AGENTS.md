@@ -51,6 +51,7 @@ not compiled code. Keep it that way:
   `scripts/build_icon.py`; edit those, never the files in `branding/`.
 - Orbit AI's URLs and Orbit Pass's fixed extension id (`scripts/orbit_config.py`) are what Orbit
   relies on; Orbit Pass's server accepts the same id. Change those together with the other repository.
-- Orbit Pass is bundled from the sibling checkout (`../Orbit Pass/extension`, or `--orbit-pass`).
-  Its Chromium manifest is made by that repository's `extension/scripts/package.mjs --chrome`; change
-  the extension there, not here.
+- Orbit Pass is **not bundled** into the app. It is force-installed and un-removable by policy
+  (`distribution/policies/orbit.json` → `ExtensionSettings`), served from Orbit Mission Control at
+  runtime. Change the extension in the Orbit Pass repository; keep its extension id in step with
+  `scripts/orbit_config.py` (`ORBIT_PASS_ID`) and Mission Control's force-install update URL.

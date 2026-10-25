@@ -1,6 +1,6 @@
 {
   "name": "orbit-browser-build",
   "private": true,
-  "description": "Orbit Browser's build tooling is Python (scripts/): it repacks a prebuilt ungoogled-chromium. Node is needed only to run the sibling Orbit Pass checkout's extension packager (scripts/build.py invokes it); this repository itself has no Node dependencies.",
+  "description": "Orbit Browser's build tooling is Python (scripts/): it repacks a prebuilt ungoogled-chromium. No Node or other dependencies; this package.json exists only to mark the repository.",
   "type": "module"
 }
