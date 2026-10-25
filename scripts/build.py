@@ -160,8 +160,7 @@ def build_mac(args, platform: str, version: str) -> list[Path]:
 
     if args.sign:
         log("Signing")
-        run("codesign", "--force", "--deep", "--timestamp", "--options", "runtime", "--sign", args.sign, app)
-        run("codesign", "--verify", "--strict", "--deep", app)
+        sign_mac(app, args.sign)
 
     DIST.mkdir(exist_ok=True)
     arch = "Intel" if platform == "mac-x64" else "AppleSilicon"
@@ -197,6 +196,75 @@ def make_dmg(app: Path, out: Path, sign: str | None) -> None:
         run("hdiutil", "create", "-quiet", "-volname", cfg.APP_NAME, "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", out)
     if sign:
         run("codesign", "--force", "--timestamp", "--sign", sign, out)
+
+
+def sign_mac(app: Path, identity: str) -> None:
+    """Sign a repacked Chromium app with a Developer ID, ready for notarization.
+
+    First strips the extended attributes codesign refuses ("resource fork, Finder
+    information, or similar detritus not allowed" -- com.apple.FinderInfo and
+    com.apple.provenance, left by copying from the mounted disk image). Then signs
+    every nested Mach-O and bundle inside-out with the hardened runtime,
+    preserving each component's own entitlements (the helper apps carry the JIT
+    entitlements the renderer and GPU processes need), and the app itself last.
+    Not `--deep`, which Apple deprecated and which signs Chromium's nested helpers
+    and framework incorrectly."""
+    run("xattr", "-cr", app)
+    contents = app / "Contents"
+    signable = [
+        p for p in contents.rglob("*")
+        if not p.is_symlink() and (
+            (p.is_dir() and p.suffix in (".app", ".framework", ".xpc"))
+            or (p.is_file() and is_macho(p))
+        )
+    ]
+    # Capture each bundle's entitlements BEFORE signing anything: the helper apps
+    # carry entitlements the processes need (the renderer's allow-jit), and
+    # signing a bundle's inner executable first would strip them before we could
+    # read them off the bundle. (Frameworks have none; that is fine.)
+    ents = {p: _entitlements(p) for p in signable if p.is_dir()}
+    ents[app] = _entitlements(app)
+    # Deepest first, so a framework's dylibs and a helper's executable are signed
+    # before the bundle that contains them; the top app is signed last, below.
+    signable.sort(key=lambda p: len(p.parts), reverse=True)
+    for path in signable:
+        _codesign(path, identity, ents.get(path))
+    _codesign(app, identity, ents[app])
+    run("codesign", "--verify", "--strict", app)
+
+
+def _codesign(path: Path, identity: str, entitlements: str | None) -> None:
+    args = ["codesign", "--force", "--sign", identity, "--options", "runtime"]
+    if identity != "-":  # ad-hoc signatures can't be timestamped
+        args.append("--timestamp")
+    if entitlements:
+        with tempfile.NamedTemporaryFile("w", suffix=".plist", delete=False) as f:
+            f.write(entitlements)
+            ents = Path(f.name)
+        try:
+            run(*args, "--entitlements", ents, path)
+        finally:
+            ents.unlink()
+    else:
+        run(*args, path)
+
+
+def _entitlements(path: Path) -> str | None:
+    """A bundle's embedded entitlements as an XML plist, or None if it has none."""
+    out = subprocess.run(
+        ["codesign", "-d", "--entitlements", "-", "--xml", str(path)],
+        capture_output=True, text=True,
+    )
+    return out.stdout if out.returncode == 0 and out.stdout.strip().startswith("<?xml") else None
+
+
+def is_macho(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            magic = f.read(4)
+    except OSError:
+        return False
+    return magic in (b"\xca\xfe\xba\xbe", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")
 
 
 # -- Windows ------------------------------------------------------------------------------
